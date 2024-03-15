@@ -1,0 +1,7 @@
+node_modules/
+
+.astro/
+icons/
+dist-ssr/
+dist/
+target/
