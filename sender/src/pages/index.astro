@@ -1,4 +1,5 @@
 ---
+import { App } from '@/components/App'
 import { ToggleDarkMode } from '@/components/ToggleDarkMode.tsx'
 import Layout from '@/layouts/Layout.astro'
 ---
@@ -14,5 +15,6 @@ import Layout from '@/layouts/Layout.astro'
         <ToggleDarkMode client:load />
       </div>
     </div>
+    <App client:only />
   </main>
 </Layout>

@@ -9,9 +9,11 @@
     "tauri": "tauri"
   },
   "dependencies": {
+    "@remote-stylus/shared": "workspace:^",
     "@tauri-apps/api": "^1.5.3",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^18.2.0",
+    "simple-peer": "^9.11.1"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^1.5.11",
@@ -19,6 +21,7 @@
     "@tsconfig/vite-react": "^3.0.1",
     "@types/react": "^18.2.66",
     "@types/react-dom": "^18.2.22",
+    "@types/simple-peer": "^9.11.8",
     "@vitejs/plugin-react": "^4.2.1",
     "typescript": "^5.4.2",
     "vite": "^5.1.6"

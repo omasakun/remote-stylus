@@ -13,4 +13,11 @@ export default defineConfig({
       applyBaseStyles: false,
     }),
   ],
+  vite: {
+    resolve: {
+      alias: {
+        'simple-peer': 'simple-peer/simplepeer.min.js',
+      },
+    },
+  },
 })
