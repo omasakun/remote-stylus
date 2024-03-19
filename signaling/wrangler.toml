@@ -1,0 +1,14 @@
+name = "webrtc-signaling"
+main = "worker.ts"
+compatibility_date = "2024-03-04"
+
+# Variable bindings. These are arbitrary, plaintext strings (similar to environment variables)
+# Note: Use secrets to store sensitive data.
+# Docs: https://developers.cloudflare.com/workers/platform/environment-variables
+# [vars]
+# MY_VARIABLE = "production_value"
+
+[[d1_databases]]
+binding = "D1"
+database_name = "webrtc-signaling"
+database_id = "d0d4a5df-0a77-4eb1-87cc-50db1757cc14"
