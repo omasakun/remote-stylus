@@ -112,7 +112,11 @@ export function App() {
   }, [])
 
   async function onConnected(peer: Peer) {
-    const stream = await navigator.mediaDevices.getDisplayMedia({ video: true })
+    const stream = await navigator.mediaDevices.getDisplayMedia({
+      video: {
+        displaySurface: 'monitor',
+      },
+    })
     peer.addStream(stream)
 
     peer.on('data:pointer', (data) => {

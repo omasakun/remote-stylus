@@ -39,7 +39,7 @@ export function App() {
   const [status, setStatus] = useState<Status>({ type: 'idle' })
   const [roomId, setRoomId] = useState<string | null>(null)
 
-  const videoRef = useRef<HTMLVideoElement>(null)
+  const videoRef = useRef<HTMLVideoElement | null>(null)
   const [videoStream, setVideoStream] = useState<MediaStream | null>(null)
 
   useEffect(() => {
@@ -125,18 +125,13 @@ export function App() {
     setVideoStream(stream)
   }
 
-  function onPointerEvent(
-    eventType: 'start' | 'move' | 'end',
-    e: React.PointerEvent<HTMLVideoElement>,
-  ) {
-    e.preventDefault()
-    e.stopPropagation()
-
+  function onPointerEvent(eventType: 'start' | 'move' | 'end', e: PointerEvent) {
     const peer = peerRef.current
     if (!peer) return
+    if (!videoRef.current) return
 
-    const rect = e.currentTarget.getBoundingClientRect()
-    const event = MsgpackPointerEvent.fromEvent(eventType, e.nativeEvent, rect)
+    const rect = videoRef.current.getBoundingClientRect()
+    const event = MsgpackPointerEvent.fromEvent(eventType, e, rect)
     peer.sendObject('pointer', event.serialize())
   }
 
@@ -177,15 +172,20 @@ export function App() {
           Fullscreen
         </Button>
         <Video
-          ref={videoRef}
+          ref={(video) => {
+            videoRef.current = video
+            if (video) {
+              video.addEventListener('contextmenu', (e) => e.preventDefault(), true)
+              video.addEventListener('pointerdown', (e) => onPointerEvent('start', e), false)
+              video.addEventListener('pointermove', (e) => onPointerEvent('move', e), false)
+              video.addEventListener('pointerup', (e) => onPointerEvent('end', e), false)
+              video.addEventListener('pointercancel', (e) => onPointerEvent('end', e), false)
+            }
+          }}
           srcObject={videoStream}
           autoPlay
           playsInline
           muted
-          onPointerDown={(e) => onPointerEvent('start', e)}
-          onPointerMove={(e) => onPointerEvent('move', e)}
-          onPointerUp={(e) => onPointerEvent('end', e)}
-          onPointerCancel={(e) => onPointerEvent('end', e)}
           style={{
             touchAction: 'none',
           }}
