@@ -1,3 +1,7 @@
+import '@fontsource/zen-kaku-gothic-new/500.css'
+import '@fontsource/zen-kaku-gothic-new/700.css'
+import './globals.css'
+
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { App } from './App'

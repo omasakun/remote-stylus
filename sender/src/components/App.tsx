@@ -125,11 +125,12 @@ export function App() {
     setVideoStream(stream)
   }
 
-  function onPointerEvent(eventType: 'start' | 'move' | 'end', e: PointerEvent) {
+  function onPointerEvent(eventType: 'up' | 'move' | 'down' | 'cancel', e: PointerEvent) {
     const peer = peerRef.current
     if (!peer) return
     if (!videoRef.current) return
 
+    e.preventDefault()
     const rect = videoRef.current.getBoundingClientRect()
     const event = MsgpackPointerEvent.fromEvent(eventType, e, rect)
     peer.sendObject('pointer', event.serialize())
@@ -138,48 +139,52 @@ export function App() {
   if (status.type === 'idle') {
     return (
       <div>
-        <div>
-          {roomId ? (
-            <p>Room ID: {roomId}</p>
-          ) : (
-            <div className='flex gap-4'>
-              <InputOTP maxLength={6} onComplete={(roomId) => setRoomId(roomId)}>
-                <InputOTPGroup>
-                  <InputOTPSlot index={0} />
-                  <InputOTPSlot index={1} />
-                  <InputOTPSlot index={2} />
-                  <InputOTPSlot index={3} />
-                  <InputOTPSlot index={4} />
-                  <InputOTPSlot index={5} />
-                </InputOTPGroup>
-              </InputOTP>
-            </div>
-          )}
-        </div>
+        {roomId ? (
+          <p>Room ID: {roomId}</p>
+        ) : (
+          <div className='flex flex-col items-center gap-4 my-24'>
+            <InputOTP maxLength={6} onComplete={(roomId) => setRoomId(roomId)}>
+              <InputOTPGroup>
+                <InputOTPSlot index={0} />
+                <InputOTPSlot index={1} />
+                <InputOTPSlot index={2} />
+                <InputOTPSlot index={3} />
+                <InputOTPSlot index={4} />
+                <InputOTPSlot index={5} />
+              </InputOTPGroup>
+            </InputOTP>
+            <div className='text-sm text-center font-medium'>Enter the room ID</div>
+          </div>
+        )}
       </div>
     )
   }
   if (status.type === 'connecting') {
-    return <div>Connecting to room {status.roomId}</div>
+    return (
+      <div className='my-24 text-sm text-center font-medium'>Connecting to #{status.roomId}</div>
+    )
   }
   if (status.type === 'connected') {
     return (
-      <div>
-        <Button
-          onClick={() => {
-            videoRef.current?.requestFullscreen()
-          }}>
-          Fullscreen
-        </Button>
+      <div className='flex flex-col gap-4'>
+        <div className='flex items-center gap-4'>
+          <Button
+            onClick={() => {
+              videoRef.current?.requestFullscreen()
+            }}>
+            Fullscreen
+          </Button>
+        </div>
         <Video
           ref={(video) => {
             videoRef.current = video
             if (video) {
+              video.addEventListener('touchstart', (e) => e.preventDefault(), true)
               video.addEventListener('contextmenu', (e) => e.preventDefault(), true)
-              video.addEventListener('pointerdown', (e) => onPointerEvent('start', e), false)
+              video.addEventListener('pointerdown', (e) => onPointerEvent('down', e), false)
               video.addEventListener('pointermove', (e) => onPointerEvent('move', e), false)
-              video.addEventListener('pointerup', (e) => onPointerEvent('end', e), false)
-              video.addEventListener('pointercancel', (e) => onPointerEvent('end', e), false)
+              video.addEventListener('pointerup', (e) => onPointerEvent('up', e), false)
+              video.addEventListener('pointercancel', (e) => onPointerEvent('cancel', e), false)
             }
           }}
           srcObject={videoStream}
@@ -194,10 +199,10 @@ export function App() {
     )
   }
   if (status.type === 'closed') {
-    return <div>Connection closed</div>
+    return <div className='my-24 text-sm text-center font-medium'>Connection closed</div>
   }
   if (status.type === 'error') {
-    return <div>Error: {status.message}</div>
+    return <div className='my-24 text-sm text-center font-medium'>Error: {status.message}</div>
   }
 
   never(status)

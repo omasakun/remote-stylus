@@ -9,6 +9,7 @@ import {
   type SignalingMessage,
 } from '@remote-stylus/shared'
 import { useEffect, useState } from 'react'
+import { injectPointerEvent, resetPointerDevice } from './services/pointer'
 
 const server = new SignalingServer()
 
@@ -32,6 +33,14 @@ type Status =
     }
 
 export function App() {
+  return (
+    <div className='container mx-auto my-8 text-center text-sm font-medium'>
+      <Inner />
+    </div>
+  )
+}
+
+export function Inner() {
   const [status, setStatus] = useState<Status>({ type: 'creating-room' })
 
   useEffect(() => {
@@ -119,9 +128,15 @@ export function App() {
     })
     peer.addStream(stream)
 
+    resetPointerDevice()
+
     peer.on('data:pointer', (data) => {
       const event = MsgpackPointerEvent.deserialize(data).info
-      console.log(event)
+      // console.log(event)
+      console.log('pointer event', event.eventType)
+
+      if (event.button < 0) event.button = 0 // TODO: move this to the sender?
+      injectPointerEvent(event)
     })
   }
 
@@ -133,10 +148,15 @@ export function App() {
     return <p>Creating room...</p>
   }
   if (status.type === 'waiting-for-connection') {
-    return <p>Room ID: {status.roomId}</p>
+    return (
+      <div className='flex flex-col gap-2'>
+        <p>Room ID</p>
+        <p className='text-2xl'>{status.roomId}</p>
+      </div>
+    )
   }
   if (status.type === 'connected') {
-    return <div>Connected</div>
+    return <p>Connected</p>
   }
   if (status.type === 'closed') {
     return <p>Connection closed</p>

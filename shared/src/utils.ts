@@ -63,9 +63,10 @@ export class Reorderer<T extends { i: number }> {
 }
 
 export interface MsgpackPointerEventInfo {
-  eventType: 'start' | 'move' | 'end'
+  eventType: 'up' | 'move' | 'down' | 'cancel'
   pointerId: number
   pointerType: string
+  isPrimary: boolean
   normalizedX: number
   normalizedY: number
   button: number
@@ -82,7 +83,7 @@ export interface MsgpackPointerEventInfo {
 export class MsgpackPointerEvent {
   constructor(public info: MsgpackPointerEventInfo) {}
   static fromEvent(
-    eventType: 'start' | 'move' | 'end',
+    eventType: 'up' | 'move' | 'down' | 'cancel',
     e: PointerEvent,
     rect: DOMRect,
   ): MsgpackPointerEvent {
@@ -90,6 +91,7 @@ export class MsgpackPointerEvent {
       eventType: eventType,
       pointerId: e.pointerId,
       pointerType: e.pointerType,
+      isPrimary: e.isPrimary,
       normalizedX: (e.clientX - rect.left) / rect.width,
       normalizedY: (e.clientY - rect.top) / rect.height,
       button: e.button,
@@ -109,17 +111,18 @@ export class MsgpackPointerEvent {
       eventType: data[0] as MsgpackPointerEventInfo['eventType'],
       pointerId: data[1] as number,
       pointerType: data[2] as string,
-      normalizedX: data[3] as number,
-      normalizedY: data[4] as number,
-      button: data[5] as number,
-      buttons: data[6] as number,
-      width: data[7] as number,
-      height: data[8] as number,
-      pressure: data[9] as number,
-      tangentialPressure: data[10] as number,
-      tiltX: data[11] as number,
-      tiltY: data[12] as number,
-      twist: data[13] as number,
+      isPrimary: data[3] as boolean,
+      normalizedX: data[4] as number,
+      normalizedY: data[5] as number,
+      button: data[6] as number,
+      buttons: data[7] as number,
+      width: data[8] as number,
+      height: data[9] as number,
+      pressure: data[10] as number,
+      tangentialPressure: data[11] as number,
+      tiltX: data[12] as number,
+      tiltY: data[13] as number,
+      twist: data[14] as number,
     })
   }
   serialize(): unknown {
@@ -127,6 +130,7 @@ export class MsgpackPointerEvent {
       this.info.eventType,
       this.info.pointerId,
       this.info.pointerType,
+      this.info.isPrimary,
       this.info.normalizedX,
       this.info.normalizedY,
       this.info.button,
