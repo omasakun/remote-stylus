@@ -9,8 +9,12 @@
     "check": "tsc --noEmit"
   },
   "devDependencies": {
-    "@tsconfig/node20": "^20.1.2",
+    "@tsconfig/vite-react": "^3.0.1",
+    "@types/react": "^18.2.67",
     "@types/simple-peer": "^9.11.8"
+  },
+  "peerDependencies": {
+    "react": "^18.2.0"
   },
   "dependencies": {
     "eventemitter3": "^5.0.1",

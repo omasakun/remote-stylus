@@ -4,6 +4,10 @@ export function assert(condition: boolean, message = 'Assertion failed.'): asser
   if (!condition) throw new Error(message)
 }
 
+export function never(_: never): never {
+  throw new Error('never')
+}
+
 export function run<T>(fn: () => T): T {
   return fn()
 }
@@ -55,5 +59,85 @@ export class Reorderer<T extends { i: number }> {
     } else {
       // ignore
     }
+  }
+}
+
+export interface MsgpackPointerEventInfo {
+  eventType: 'start' | 'move' | 'end'
+  pointerId: number
+  pointerType: string
+  normalizedX: number
+  normalizedY: number
+  button: number
+  buttons: number
+  width: number
+  height: number
+  pressure: number
+  tangentialPressure: number
+  tiltX: number
+  tiltY: number
+  twist: number
+}
+
+export class MsgpackPointerEvent {
+  constructor(public info: MsgpackPointerEventInfo) {}
+  static fromEvent(
+    eventType: 'start' | 'move' | 'end',
+    e: PointerEvent,
+    rect: DOMRect,
+  ): MsgpackPointerEvent {
+    return new MsgpackPointerEvent({
+      eventType: eventType,
+      pointerId: e.pointerId,
+      pointerType: e.pointerType,
+      normalizedX: (e.clientX - rect.left) / rect.width,
+      normalizedY: (e.clientY - rect.top) / rect.height,
+      button: e.button,
+      buttons: e.buttons,
+      width: e.width,
+      height: e.height,
+      pressure: e.pressure,
+      tangentialPressure: e.tangentialPressure,
+      tiltX: e.tiltX,
+      tiltY: e.tiltY,
+      twist: e.twist,
+    })
+  }
+  static deserialize(data: unknown): MsgpackPointerEvent {
+    assert(Array.isArray(data))
+    return new MsgpackPointerEvent({
+      eventType: data[0] as MsgpackPointerEventInfo['eventType'],
+      pointerId: data[1] as number,
+      pointerType: data[2] as string,
+      normalizedX: data[3] as number,
+      normalizedY: data[4] as number,
+      button: data[5] as number,
+      buttons: data[6] as number,
+      width: data[7] as number,
+      height: data[8] as number,
+      pressure: data[9] as number,
+      tangentialPressure: data[10] as number,
+      tiltX: data[11] as number,
+      tiltY: data[12] as number,
+      twist: data[13] as number,
+    })
+  }
+  serialize(): unknown {
+    return [
+      this.info.eventType,
+      this.info.pointerId,
+      this.info.pointerType,
+      this.info.normalizedX,
+      this.info.normalizedY,
+      this.info.button,
+      this.info.buttons,
+      this.info.width,
+      this.info.height,
+      this.info.pressure,
+      this.info.tangentialPressure,
+      this.info.tiltX,
+      this.info.tiltY,
+      this.info.twist,
+    ]
   }
 }

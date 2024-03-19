@@ -1,19 +1,38 @@
 import {
+  MsgpackPointerEvent,
   Peer,
   Reorderer,
   SignalingRoom,
   SignalingServer,
+  never,
   run,
   type SignalingMessage,
 } from '@remote-stylus/shared'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 
 const server = new SignalingServer()
 
+type Status =
+  | {
+      type: 'creating-room'
+    }
+  | {
+      type: 'waiting-for-connection'
+      roomId: string
+    }
+  | {
+      type: 'connected'
+    }
+  | {
+      type: 'closed'
+    }
+  | {
+      type: 'error'
+      message: string
+    }
+
 export function App() {
-  const videoRef = useRef<HTMLVideoElement>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [roomId, setRoomId] = useState<string | null>(null)
+  const [status, setStatus] = useState<Status>({ type: 'creating-room' })
 
   useEffect(() => {
     let aborted = false
@@ -28,7 +47,7 @@ export function App() {
       })
 
       if (!room) {
-        setError('Failed to create room')
+        setStatus({ type: 'error', message: 'Failed to create room' })
         return
       }
 
@@ -37,7 +56,7 @@ export function App() {
         return
       }
 
-      setRoomId(room.roomId)
+      setStatus({ type: 'waiting-for-connection', roomId: room.roomId })
 
       const peer = new Peer({ initiator: true, trickle: false })
       const queue: SignalingMessage[] = []
@@ -58,19 +77,27 @@ export function App() {
       })
 
       peer.on('connect', () => {
-        console.log('connected')
+        setStatus({ type: 'connected' })
 
         // 接続開始とほぼ同時に発生した signal メッセージがもれないように、接続後に念のため再送信する
         queue.forEach((item) => {
           peer.sendObject('signal', item.data)
         })
         void room.dispose()
+
+        void onConnected(peer)
       })
 
       peer.on('stream', (stream) => {
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream
-        }
+        void onStream(peer, stream)
+      })
+
+      peer.on('close', () => {
+        setStatus({ type: 'closed' })
+      })
+
+      peer.on('error', (error) => {
+        setStatus({ type: 'error', message: error.message })
       })
 
       return () => {
@@ -84,12 +111,35 @@ export function App() {
     }
   }, [])
 
-  return (
-    <div>
-      <h1>Receiver</h1>
-      {error ? <p>{error}</p> : null}
-      {roomId === null ? <p>Connecting...</p> : <p>Room ID: {roomId}</p>}
-      <video ref={videoRef} autoPlay playsInline />
-    </div>
-  )
+  async function onConnected(peer: Peer) {
+    const stream = await navigator.mediaDevices.getDisplayMedia({ video: true })
+    peer.addStream(stream)
+
+    peer.on('data:pointer', (data) => {
+      const event = MsgpackPointerEvent.deserialize(data).info
+      console.log(event)
+    })
+  }
+
+  async function onStream(peer: Peer, stream: MediaStream) {
+    // TODO
+  }
+
+  if (status.type === 'creating-room') {
+    return <p>Creating room...</p>
+  }
+  if (status.type === 'waiting-for-connection') {
+    return <p>Room ID: {status.roomId}</p>
+  }
+  if (status.type === 'connected') {
+    return <div>Connected</div>
+  }
+  if (status.type === 'closed') {
+    return <p>Connection closed</p>
+  }
+  if (status.type === 'error') {
+    return <p>Error: {status.message}</p>
+  }
+
+  never(status)
 }

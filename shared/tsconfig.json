@@ -1,10 +1,7 @@
 {
-  "extends": "@tsconfig/node20",
+  "extends": "@tsconfig/vite-react",
   "compilerOptions": {
-    "lib": ["ESNext", "DOM"],
     "outDir": "dist",
-    "module": "ESNext",
-    "moduleResolution": "Bundler",
     "declaration": true
   },
   "include": ["src"]
