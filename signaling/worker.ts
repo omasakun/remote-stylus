@@ -25,6 +25,7 @@ function isAllowedOrigin(origin: string | undefined) {
   if (origin === 'https://o137.net') return true
   if (origin.startsWith('https://') && origin.endsWith('.o137.net')) return true
   if (origin.startsWith('http://localhost:')) return true
+  if (origin === 'https://tauri.localhost') return true
   return false
 }
 

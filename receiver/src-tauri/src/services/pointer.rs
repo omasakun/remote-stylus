@@ -96,7 +96,7 @@ struct PointerEvent {
   twist: u32,
 }
 
-impl From<PointerEvent> for POINTER_TYPE_INFO {
+impl From<PointerEvent> for Option<POINTER_TYPE_INFO> {
   fn from(event: PointerEvent) -> Self {
     let mut pointer_flags = match event.event_type {
       PointerEventType::Down => POINTER_FLAG_INRANGE | POINTER_FLAG_INCONTACT | POINTER_FLAG_DOWN,
@@ -160,44 +160,47 @@ impl From<PointerEvent> for POINTER_TYPE_INFO {
       ButtonChangeType: button_change_type,
     };
 
-    let union_arg = if device_type == PT_TOUCH {
-      let width_half = event.width / 2.0;
-      let height_half = event.height / 2.0;
-      let contact_area = RECT {
-        left: (x - width_half) as i32,
-        top: (y - height_half) as i32,
-        right: (x + width_half) as i32,
-        bottom: (y + height_half) as i32,
-      };
+    match device_type {
+      PT_TOUCH => {
+        let width_half = event.width / 2.0;
+        let height_half = event.height / 2.0;
+        let contact_area = RECT {
+          left: (x - width_half) as i32,
+          top: (y - height_half) as i32,
+          right: (x + width_half) as i32,
+          bottom: (y + height_half) as i32,
+        };
 
-      POINTER_TYPE_INFO_0 {
-        touchInfo: POINTER_TOUCH_INFO {
-          pointerInfo: pointer_info,
-          touchFlags: TOUCH_FLAG_NONE,
-          touchMask: TOUCH_MASK_CONTACTAREA | TOUCH_MASK_PRESSURE,
-          rcContact: contact_area,
-          rcContactRaw: RECT::default(),
-          orientation: 0,
-          pressure,
-        },
+        Some(POINTER_TYPE_INFO {
+          r#type: device_type,
+          Anonymous: POINTER_TYPE_INFO_0 {
+            touchInfo: POINTER_TOUCH_INFO {
+              pointerInfo: pointer_info,
+              touchFlags: TOUCH_FLAG_NONE,
+              touchMask: TOUCH_MASK_CONTACTAREA | TOUCH_MASK_PRESSURE,
+              rcContact: contact_area,
+              rcContactRaw: RECT::default(),
+              orientation: 0,
+              pressure,
+            },
+          },
+        })
       }
-    } else {
-      POINTER_TYPE_INFO_0 {
-        penInfo: POINTER_PEN_INFO {
-          pointerInfo: pointer_info,
-          penFlags: PEN_FLAG_NONE,
-          penMask: PEN_MASK_PRESSURE | PEN_MASK_ROTATION | PEN_MASK_TILT_X | PEN_MASK_TILT_Y,
-          pressure,
-          rotation: event.twist,
-          tiltX: event.tilt_x,
-          tiltY: event.tilt_y,
+      PT_PEN => Some(POINTER_TYPE_INFO {
+        r#type: device_type,
+        Anonymous: POINTER_TYPE_INFO_0 {
+          penInfo: POINTER_PEN_INFO {
+            pointerInfo: pointer_info,
+            penFlags: PEN_FLAG_NONE,
+            penMask: PEN_MASK_PRESSURE | PEN_MASK_ROTATION | PEN_MASK_TILT_X | PEN_MASK_TILT_Y,
+            pressure,
+            rotation: event.twist,
+            tiltX: event.tilt_x,
+            tiltY: event.tilt_y,
+          },
         },
-      }
-    };
-
-    POINTER_TYPE_INFO {
-      r#type: device_type,
-      Anonymous: union_arg,
+      }),
+      _ => None,
     }
   }
 }
@@ -233,7 +236,10 @@ impl PointerDevices {
   }
 
   fn inject(&mut self, event: PointerEvent) -> windows::core::Result<()> {
-    let info: POINTER_TYPE_INFO = event.into();
+    let info: POINTER_TYPE_INFO = match event.into() {
+      Some(info) => info,
+      None => return Ok(()),
+    };
 
     if info.r#type == PT_TOUCH {
       self.touches.insert(event.id, info);
