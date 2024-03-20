@@ -34,7 +34,7 @@ type Status =
 
 export function App() {
   return (
-    <div className='container mx-auto my-8 text-center text-sm font-medium'>
+    <div className='container mx-auto my-8 text-center font-medium'>
       <Inner />
     </div>
   )
@@ -56,7 +56,7 @@ export function Inner() {
       })
 
       if (!room) {
-        setStatus({ type: 'error', message: 'Failed to create room' })
+        setStatus({ type: 'error', message: 'Failed to create a new room' })
         return
       }
 
@@ -151,7 +151,7 @@ export function Inner() {
     return (
       <div className='flex flex-col gap-2'>
         <p>Room ID</p>
-        <p className='text-2xl'>{status.roomId}</p>
+        <p className='text-3xl font-bold'>{status.roomId}</p>
       </div>
     )
   }

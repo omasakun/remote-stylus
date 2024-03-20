@@ -143,6 +143,7 @@ export function App() {
           <p>Room ID: {roomId}</p>
         ) : (
           <div className='flex flex-col items-center gap-4 my-24'>
+            <div className='text-center font-medium'>Enter the room ID</div>
             <InputOTP maxLength={6} onComplete={(roomId) => setRoomId(roomId)}>
               <InputOTPGroup>
                 <InputOTPSlot index={0} />
@@ -153,16 +154,13 @@ export function App() {
                 <InputOTPSlot index={5} />
               </InputOTPGroup>
             </InputOTP>
-            <div className='text-sm text-center font-medium'>Enter the room ID</div>
           </div>
         )}
       </div>
     )
   }
   if (status.type === 'connecting') {
-    return (
-      <div className='my-24 text-sm text-center font-medium'>Connecting to #{status.roomId}</div>
-    )
+    return <div className='my-24 text-center font-medium'>Connecting to #{status.roomId}</div>
   }
   if (status.type === 'connected') {
     return (
@@ -199,10 +197,10 @@ export function App() {
     )
   }
   if (status.type === 'closed') {
-    return <div className='my-24 text-sm text-center font-medium'>Connection closed</div>
+    return <div className='my-24 text-center font-medium'>Connection closed</div>
   }
   if (status.type === 'error') {
-    return <div className='my-24 text-sm text-center font-medium'>Error: {status.message}</div>
+    return <div className='my-24 text-center font-medium'>Error: {status.message}</div>
   }
 
   never(status)
