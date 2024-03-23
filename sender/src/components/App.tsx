@@ -7,6 +7,7 @@ import {
   SignalingRoom,
   SignalingServer,
   Video,
+  assert,
   never,
   run,
   type SignalingMessage,
@@ -41,6 +42,9 @@ export function App() {
 
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const [videoStream, setVideoStream] = useState<MediaStream | null>(null)
+
+  /** 利便性のために i32 から u32 への変換を行うためのマップ */
+  const pointerIdMap = useRef(new Map<number, number>())
 
   useEffect(() => {
     if (!roomId) return
@@ -125,6 +129,27 @@ export function App() {
     setVideoStream(stream)
   }
 
+  function patchPointerId(e: MsgpackPointerEvent) {
+    const map = pointerIdMap.current
+    const id = e.info.pointerId
+    if (!map.has(id)) {
+      for (let i = 0; true; i++) {
+        if (!map.has(i)) {
+          map.set(id, i)
+          break
+        }
+      }
+    }
+
+    const patchedId = map.get(id)
+    assert(patchedId !== undefined)
+    e.info.pointerId = patchedId
+
+    if (e.info.eventType === 'up' || e.info.eventType === 'cancel') {
+      map.delete(id)
+    }
+  }
+
   function onPointerEvent(eventType: 'up' | 'move' | 'down' | 'cancel', e: PointerEvent) {
     const peer = peerRef.current
     if (!peer) return
@@ -133,6 +158,7 @@ export function App() {
     e.preventDefault()
     const rect = videoRef.current.getBoundingClientRect()
     const event = MsgpackPointerEvent.fromEvent(eventType, e, rect)
+    patchPointerId(event)
     peer.sendObject('pointer', event.serialize())
   }
 
