@@ -1,7 +1,11 @@
-node_modules/
-
+# auto generated
 .astro/
-icons/
+.embuild/
 dist-ssr/
 dist/
+icons/
+node_modules/
 target/
+
+# macOS-specific files
+.DS_Store

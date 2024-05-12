@@ -22,5 +22,6 @@
   "typescript.preferences.importModuleSpecifier": "non-relative",
   "[toml]": {
     "editor.defaultFormatter": "tamasfe.even-better-toml"
-  }
+  },
+  "git.repositoryScanIgnoredFolders": ["node_modules", ".embuild"]
 }
