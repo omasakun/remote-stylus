@@ -6,7 +6,7 @@ use std::{
 };
 
 use esp_idf_svc::sys::*;
-use log::{info, warn};
+use log::{error, info, warn};
 
 /// Macro to move a value to the heap and don't free it
 macro_rules! leak {
@@ -230,4 +230,42 @@ pub fn ble_key_type_name(key_type: esp_ble_key_type_t) -> String {
     _ => "INVALID",
   }
   .to_string()
+}
+
+pub fn char_to_code(key: u8) -> [u8; 8] {
+  let mut data = [0; 8];
+  match key {
+    b'a'..=b'z' => {
+      let code = key - b'a';
+      data[2] = code + 4;
+    }
+    b'A'..=b'Z' => {
+      let code = key - b'A';
+      data[0] = 0x02; // shift
+      data[2] = code + 4;
+    }
+    b'0' => {
+      data[2] = 0x27;
+    }
+    b'1'..=b'9' => {
+      let code = key - b'1';
+      data[2] = code + 0x1e;
+    }
+    b' ' => {
+      data[2] = 0x2c;
+    }
+    b'.' => {
+      data[2] = 0x37;
+    }
+    b',' => {
+      data[2] = 0x36;
+    }
+    b'\n' => {
+      data[0] = 0x28;
+    }
+    _ => {
+      error!("unsupported key: {}", key);
+    }
+  };
+  data
 }

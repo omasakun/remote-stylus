@@ -11,18 +11,30 @@
 
 #![allow(non_upper_case_globals)]
 
-#[macro_use]
+mod lorem;
 mod utils;
 
-use std::{ffi::CString, thread::sleep, time::Duration};
+use std::{
+  ffi::CString,
+  sync::mpsc::{self, TryRecvError},
+  thread::{sleep, spawn},
+  time::Duration,
+};
 
 use esp_idf_svc::{log::EspLogger, sys::*};
-use log::info;
+use log::{error, info};
+use once_cell::sync::OnceCell;
+use utils::{char_to_code, KEYBOARD_REPORT_MAP};
 
-use crate::utils::{
-  ble_gap_set_device_name, ble_gap_set_security_param, ble_key_type_name, bt_controller_config_default,
-  gap_ble_event_name, initialize_nvs, spawn_heap_logger, MEDIA_REPORT_MAP,
+use crate::{
+  lorem::LOREM_IPSUM,
+  utils::{
+    ble_gap_set_device_name, ble_gap_set_security_param, ble_key_type_name, bt_controller_config_default,
+    gap_ble_event_name, initialize_nvs,
+  },
 };
+
+static TYPING_TASK: OnceCell<TypingTask> = OnceCell::new();
 
 fn main() {
   // It is necessary to call this function once.
@@ -59,26 +71,101 @@ fn main() {
     device_name,
     manufacturer,
     serial_number,
-    &MEDIA_REPORT_MAP,
+    &KEYBOARD_REPORT_MAP,
     Some(ble_hidd_event_callback),
   );
 
-  spawn_heap_logger();
+  // spawn_heap_logger();
 
-  loop {
-    info!("main thread is alive");
-    info!("hid device: {:?}", hid_dev);
-    unsafe { info!("hid device: {:?}", *hid_dev) }
-    sleep(Duration::from_secs(10));
-  }
+  TYPING_TASK.get_or_init(|| TypingTask::new(hid_dev));
+
+  // loop {
+  //   info!("main thread is alive");
+  //   sleep(Duration::from_secs(100));
+  // }
 }
 
 fn ble_hid_task_start_up() {
-  // TODO
+  if let Some(task) = TYPING_TASK.get() {
+    task.resume();
+  }
 }
 
 fn ble_hid_task_shut_down() {
-  // TODO
+  if let Some(task) = TYPING_TASK.get() {
+    task.pause();
+  }
+}
+
+// TODO: I don't know if this is actually safe to do
+struct HiddDevBox(*mut esp_hidd_dev_t);
+unsafe impl Send for HiddDevBox {}
+
+struct TypingTask {
+  resume: mpsc::Sender<()>,
+  pause: mpsc::Sender<()>,
+}
+impl TypingTask {
+  fn new(hid_dev: *mut esp_hidd_dev_t) -> Self {
+    let hid_dev = HiddDevBox(hid_dev);
+    let (resume_tx, resume_rx) = mpsc::channel();
+    let (pause_tx, pause_rx) = mpsc::channel();
+    let this = Self {
+      resume: resume_tx,
+      pause: pause_tx,
+    };
+
+    fn task(hid_dev: &HiddDevBox, i: &mut usize) {
+      let hid_dev = hid_dev.0;
+
+      // info!("typing task: typing");
+
+      let c = LOREM_IPSUM.as_bytes()[*i];
+      *i = (*i + 1) % LOREM_IPSUM.len();
+
+      ble_hidd_send_keyboard_press(hid_dev, c);
+      sleep(Duration::from_millis(10));
+      ble_hidd_send_keyboard_release(hid_dev);
+      sleep(Duration::from_millis(10));
+    }
+
+    spawn(move || loop {
+      match resume_rx.recv() {
+        Ok(_) => {
+          info!("typing task: resume");
+        }
+        Err(_) => {
+          info!("typing task: resume channel closed");
+          return;
+        }
+      }
+
+      let mut i = 0;
+      sleep(Duration::from_secs(5));
+
+      loop {
+        match pause_rx.try_recv() {
+          Err(TryRecvError::Empty) => {}
+          Ok(_) => {
+            info!("typing task: pause");
+            break;
+          }
+          Err(TryRecvError::Disconnected) => {
+            info!("typing task: pause channel closed");
+            return;
+          }
+        }
+        task(&hid_dev, &mut i);
+      }
+    });
+    this
+  }
+  fn resume(&self) {
+    self.resume.send(()).unwrap();
+  }
+  fn pause(&self) {
+    self.pause.send(()).unwrap();
+  }
 }
 
 fn ble_hidd_init(
@@ -158,7 +245,14 @@ extern "C" fn ble_hidd_event_callback(
     }
     esp_hidd_event_t_ESP_HIDD_OUTPUT_EVENT => {
       let output = unsafe { &param.output };
-      info!("hidd: output[{}]: {:?}", output.map_index, output);
+      let data = unsafe {
+        std::slice::from_raw_parts(output.data, output.length as usize)
+          .iter()
+          .map(|&x| format!("{:02x}", x))
+          .collect::<Vec<_>>()
+          .join(" ")
+      };
+      info!("hidd: output[{}]: {:}", output.map_index, data);
     }
     esp_hidd_event_t_ESP_HIDD_FEATURE_EVENT => {
       let feature = unsafe { &param.feature };
@@ -180,6 +274,19 @@ extern "C" fn ble_hidd_event_callback(
       info!("hidd: unhandled event: {:?}", event);
     }
   }
+}
+
+fn ble_hidd_send_keyboard_press(hid_dev: *mut esp_hidd_dev_t, key: u8) {
+  let mut data = char_to_code(key);
+  let _ = unsafe { esp!(esp_hidd_dev_input_set(hid_dev, 0, 1, data.as_mut_ptr(), data.len())) }.inspect_err(|e| {
+    error!("failed to send keyboard input: {:?}", e);
+  });
+}
+fn ble_hidd_send_keyboard_release(hid_dev: *mut esp_hidd_dev_t) {
+  let mut data = [0; 8];
+  let _ = unsafe { esp!(esp_hidd_dev_input_set(hid_dev, 0, 1, data.as_mut_ptr(), data.len())) }.inspect_err(|e| {
+    error!("failed to send keyboard input: {:?}", e);
+  });
 }
 
 fn esp_hid_ble_gap_adv_init(device_name: &str) {
@@ -246,6 +353,15 @@ extern "C" fn ble_gap_callback(event: esp_gap_ble_cb_event_t, param: *mut esp_bl
     // scan
     // advertise
     // authentication
+    esp_gap_ble_cb_event_t_ESP_GAP_BLE_KEY_EVT => {
+      let ble_key = unsafe { param.ble_security.ble_key };
+      info!("gap: key type: {}", ble_key_type_name(ble_key.key_type));
+    }
+    esp_gap_ble_cb_event_t_ESP_GAP_BLE_SEC_REQ_EVT => {
+      let mut ble_req = unsafe { param.ble_security.ble_req };
+      info!("gap: security request");
+      unsafe { esp_nofail!(esp_ble_gap_security_rsp(ble_req.bd_addr.as_mut_ptr(), true)) }
+    }
     esp_gap_ble_cb_event_t_ESP_GAP_BLE_AUTH_CMPL_EVT => {
       let auth_cmpl = unsafe { param.ble_security.auth_cmpl };
       if auth_cmpl.success {
@@ -255,9 +371,9 @@ extern "C" fn ble_gap_callback(event: esp_gap_ble_cb_event_t, param: *mut esp_bl
       }
       ble_hid_task_start_up()
     }
-    esp_gap_ble_cb_event_t_ESP_GAP_BLE_KEY_EVT => {
-      let ble_key = unsafe { param.ble_security.ble_key };
-      info!("gap: key type: {}", ble_key_type_name(ble_key.key_type));
+    esp_gap_ble_cb_event_t_ESP_GAP_BLE_UPDATE_CONN_PARAMS_EVT => {
+      let params = unsafe { param.update_conn_params };
+      info!("gap: update conn params: {:?}", params);
     }
     _ => {
       info!("gap: {}", gap_ble_event_name(event));
