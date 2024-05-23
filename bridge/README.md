@@ -16,6 +16,7 @@ winget install usbipd       # wsl2 (usb binding)
 cargo install ldproxy
 cargo install espup
 cargo install espflash
+cargo install cargo-espflash
 
 espup install
 
@@ -30,7 +31,11 @@ usbipd attach --wsl --busid <busid>
 cargo run
 ```
 
-## Materials
+## References
 
 - [The Rust on ESP Book](https://docs.esp-rs.org/book/introduction.html)
 - [Embedded Rust on Espressif](https://docs.esp-rs.org/std-training/01_intro.html)
+- [esp-idf-svc & examples](https://github.com/esp-rs/esp-idf-svc)
+- [esp-idf-sys & examples](https://github.com/esp-rs/esp-idf-sys)
+- [esp-idf & examples](https://github.com/espressif/esp-idf)
+- [grep.app](https://grep.app)
