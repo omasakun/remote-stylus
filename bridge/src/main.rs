@@ -19,7 +19,7 @@ use std::{
   mem, slice,
   sync::{
     mpsc::{self, Sender, TryRecvError},
-    Mutex,
+    Arc, Mutex,
   },
   thread::{sleep, spawn},
   time::Duration,
@@ -29,7 +29,7 @@ use derive_new::new;
 use esp_idf_svc::{log::EspLogger, sys::*};
 use log::{error, info};
 use once_cell::sync::OnceCell;
-use utils::{char_to_code, KEYBOARD_REPORT_MAP};
+use utils::{char_to_code, hex_from_raw_data, is_keyboard_cod, KEYBOARD_REPORT_MAP};
 
 use crate::{
   lorem::LOREM_IPSUM,
@@ -117,18 +117,6 @@ fn main() {
   // }
 }
 
-fn hidd_startup() {
-  if let Some(task) = TYPING_TASK.get() {
-    task.resume();
-  }
-}
-
-fn hidd_shutdown() {
-  if let Some(task) = TYPING_TASK.get() {
-    task.pause();
-  }
-}
-
 // TODO: I don't know if this is actually safe to do
 struct HiddDevBox(*mut esp_hidd_dev_t);
 unsafe impl Send for HiddDevBox {}
@@ -151,7 +139,6 @@ impl TypingTask {
       let hid_dev = hid_dev.0;
 
       sleep(Duration::from_secs(1));
-      return; // TODO
 
       // info!("typing task: typing");
 
@@ -195,32 +182,87 @@ impl TypingTask {
     });
     this
   }
-  fn resume(&self) {
+  fn on_hidd_resume(&self) {
     self.resume.send(()).unwrap();
   }
-  fn pause(&self) {
+  fn on_hidd_pause(&self) {
     self.pause.send(()).unwrap();
   }
 }
 
-struct ScanTask {}
+#[derive(Clone)]
+struct ScanTask {
+  scanning: Arc<Mutex<bool>>,
+}
 impl ScanTask {
   fn new() -> Self {
-    let this = Self {};
-    spawn(move || loop {
-      info!("scan task: scanning");
+    let this = Self {
+      scanning: Arc::new(Mutex::new(true)),
+    };
 
-      let devices = bt_hidh_scan(Duration::from_secs(5));
-      for device in devices {
-        if device.is_keyboard() {
-          info!("scan task: found keyboard: {:?}", device);
-        } else {
-          info!("scan task: found device: {:?}", device);
+    spawn({
+      let this = this.clone();
+      move || loop {
+        if !this.is_scanning() {
+          sleep(Duration::from_secs(1));
+          continue;
+        }
+
+        info!("scan task: scanning");
+
+        let devices = bt_hidh_scan(Duration::from_secs(5));
+        if !this.is_scanning() {
+          continue;
+        }
+
+        let mut keyboard = None;
+        for device in devices.iter().filter(|d| d.is_keyboard()) {
+          if device.is_keyboard() {
+            info!("scan task: found keyboard: {:?}", device);
+            keyboard = Some(device);
+          } else {
+            info!("scan task: found device: {:?}", device);
+          }
+        }
+        if let Some(keyboard) = keyboard {
+          info!("scan task: connecting to keyboard: {:?}", keyboard);
+          let _ = unsafe {
+            esp!(esp_hidh_dev_open(
+              keyboard.bda.as_ptr() as _,
+              esp_hid_transport_t_ESP_HID_TRANSPORT_BT,
+              0
+            ))
+          }
+          .inspect_err(|e| {
+            error!("failed to open hid device: {:?}", e);
+          });
+          this.set_scanning(false);
         }
       }
-      sleep(Duration::from_secs(10));
     });
     this
+  }
+  fn is_scanning(&self) -> bool {
+    *self.scanning.lock().unwrap()
+  }
+  fn set_scanning(&self, scanning: bool) {
+    *self.scanning.lock().unwrap() = scanning;
+  }
+  fn on_hidh_open(&self, status: esp_err_t) {
+    if status == ESP_OK {
+      self.set_scanning(false);
+    } else {
+      self.set_scanning(true);
+    }
+  }
+  fn on_hidh_close(&self) {
+    self.set_scanning(true);
+  }
+  fn on_hidh_input(&self, usage_type: esp_hid_usage_t, data: &[u8]) {
+    if usage_type & esp_hid_usage_t_ESP_HID_USAGE_KEYBOARD == esp_hid_usage_t_ESP_HID_USAGE_KEYBOARD {
+      // https://usb.org/sites/default/files/hut1_22.pdf
+      // TODO: send key press/release
+    }
   }
 }
 
@@ -266,10 +308,12 @@ extern "C" fn hidh_event_callback(
       let open = unsafe { param.open };
       if open.status == ESP_OK {
         let bda = get_hidh_dev_bda(open.dev);
-        let name = get_hidh_dev_name(open.dev);
-        info!("hidh[{}]: open: {}", bda, name);
+        info!("hidh[{}]: open", bda);
       } else {
         info!("hidh: open failed: {}", open.status);
+      }
+      if let Some(task) = SCAN_TASK.get() {
+        task.on_hidh_open(open.status);
       }
     }
     esp_hidh_event_t_ESP_HIDH_BATTERY_EVENT => {
@@ -287,6 +331,11 @@ extern "C" fn hidh_event_callback(
         "hidh[{}]: input: {}, map: {}, id: {}, data: {}",
         bda, usage_type, input.map_index, input.report_id, data
       );
+      if let Some(task) = SCAN_TASK.get() {
+        task.on_hidh_input(input.usage, unsafe {
+          slice::from_raw_parts(input.data, input.length as usize)
+        });
+      }
     }
     esp_hidh_event_t_ESP_HIDH_FEATURE_EVENT => {
       let feature = unsafe { param.feature };
@@ -302,8 +351,10 @@ extern "C" fn hidh_event_callback(
     esp_hidh_event_t_ESP_HIDH_CLOSE_EVENT => {
       let close = unsafe { param.close };
       let bda = get_hidh_dev_bda(close.dev);
-      let name = get_hidh_dev_name(close.dev);
-      info!("hidh[{}]: close: {}", bda, name);
+      info!("hidh[{}]: close", bda);
+      if let Some(task) = SCAN_TASK.get() {
+        task.on_hidh_close();
+      }
     }
     esp_hidh_event_t_ESP_HIDH_STOP_EVENT => {
       info!("hidh: stop");
@@ -311,16 +362,6 @@ extern "C" fn hidh_event_callback(
     _ => {
       info!("hidh: unhandled event: {:?}", event);
     }
-  }
-}
-
-fn hex_from_raw_data(data: *const u8, len: usize) -> String {
-  unsafe {
-    slice::from_raw_parts(data, len)
-      .iter()
-      .map(|&x| format!("{:02x}", x))
-      .collect::<Vec<_>>()
-      .join(" ")
   }
 }
 
@@ -334,12 +375,6 @@ fn get_hidh_dev_bda(dev: *mut esp_hidh_dev_t) -> String {
       .join(":")
   };
   bda
-}
-
-fn get_hidh_dev_name(dev: *mut esp_hidh_dev_t) -> String {
-  let name = unsafe { esp_hidh_dev_name_get(dev) };
-  let name = unsafe { CStr::from_ptr(name).to_str().unwrap() };
-  name.to_string()
 }
 
 fn ble_hidd_init(
@@ -411,10 +446,12 @@ extern "C" fn hidd_event_callback(
         "enter_suspend"
       };
       info!("hidd: control[{}] -> {}", control.map_index, operation);
-      if control.control == 1 {
-        hidd_startup();
-      } else {
-        hidd_shutdown();
+      if let Some(task) = TYPING_TASK.get() {
+        if control.control == 1 {
+          task.on_hidd_resume();
+        } else {
+          task.on_hidd_pause();
+        }
       }
     }
     esp_hidd_event_t_ESP_HIDD_OUTPUT_EVENT => {
@@ -432,7 +469,9 @@ extern "C" fn hidd_event_callback(
         unsafe { esp_hid_disconnect_reason_str(esp_hidd_dev_transport_get(disconnect.dev), disconnect.reason) };
       let reason = unsafe { CStr::from_ptr(reason).to_str().unwrap() };
       info!("hidd: disconnect: {}", reason);
-      hidd_shutdown();
+      if let Some(task) = TYPING_TASK.get() {
+        task.on_hidd_pause();
+      }
       esp_hid_ble_gap_adv_start();
     }
     esp_hidd_event_t_ESP_HIDD_STOP_EVENT => {
@@ -450,6 +489,7 @@ fn hidd_send_keyboard_press(hid_dev: *mut esp_hidd_dev_t, key: u8) {
     error!("failed to send keyboard input: {:?}", e);
   });
 }
+
 fn hidd_send_keyboard_release(hid_dev: *mut esp_hidd_dev_t) {
   let mut data = [0; 8];
   let _ = unsafe { esp!(esp_hidd_dev_input_set(hid_dev, 0, 1, data.as_mut_ptr(), data.len())) }.inspect_err(|e| {
@@ -536,7 +576,9 @@ extern "C" fn ble_gap_callback(event: esp_gap_ble_cb_event_t, param: *mut esp_bl
       } else {
         info!("ble-gap: auth failed: {}", auth_cmpl.fail_reason);
       }
-      hidd_startup()
+      if let Some(task) = TYPING_TASK.get() {
+        task.on_hidd_resume();
+      }
     }
     esp_gap_ble_cb_event_t_ESP_GAP_BLE_UPDATE_CONN_PARAMS_EVT => {
       let params = unsafe { param.update_conn_params };
@@ -588,8 +630,8 @@ extern "C" fn bt_gap_callback(event: esp_bt_gap_cb_event_t, param: *mut esp_bt_g
           ))
         }
       } else {
-        info!("bt-gap: input pin code 1234");
-        let mut pin_code: esp_bt_pin_code_t = [1, 2, 3, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        info!("bt-gap: input pin code 0000");
+        let mut pin_code: esp_bt_pin_code_t = [0; 16];
         unsafe {
           esp_nofail!(esp_bt_gap_pin_reply(
             pin_req.bda.as_mut_ptr(),
@@ -604,77 +646,6 @@ extern "C" fn bt_gap_callback(event: esp_bt_gap_cb_event_t, param: *mut esp_bt_g
       info!("bt-gap: {}", bt_gap_event_name(event));
     }
   }
-}
-
-#[derive(Debug, new)]
-struct BtDevice {
-  bda: [u8; 6],
-  name: Option<String>,
-  rssi: Option<i8>,
-  cod: Option<u32>,
-}
-
-impl BtDevice {
-  fn merge(&mut self, other: BtDevice) {
-    if let Some(name) = other.name {
-      self.name = Some(name);
-    }
-    if let Some(rssi) = other.rssi {
-      if let Some(self_rssi) = self.rssi {
-        self.rssi = Some(self_rssi.max(rssi));
-      } else {
-        self.rssi = Some(rssi);
-      }
-    }
-    if let Some(cod) = other.cod {
-      self.cod = Some(cod);
-    }
-  }
-  fn is_keyboard(&self) -> bool {
-    if let Some(cod) = self.cod {
-      is_keyboard_cod(cod)
-    } else {
-      false
-    }
-  }
-}
-
-fn parse_bt_device_result(disc_res: esp_bt_gap_cb_param_t_disc_res_param) -> BtDevice {
-  let bda = disc_res.bda;
-  let mut device = BtDevice::new(bda, None, None, None);
-
-  let bda = bda.iter().map(|&x| format!("{:02x}", x)).collect::<Vec<_>>().join(":");
-  info!("bt-gap: device found: {}", bda);
-
-  let props = unsafe { slice::from_raw_parts(disc_res.prop, disc_res.num_prop as usize) };
-  for prop in props {
-    match prop.type_ {
-      esp_bt_gap_dev_prop_type_t_ESP_BT_GAP_DEV_PROP_BDNAME => {
-        let name = unsafe { CStr::from_ptr(prop.val as *const i8).to_str().unwrap() };
-        device.name = Some(name.to_string());
-        // info!("bt-gap:   name: {}", name);
-      }
-      esp_bt_gap_dev_prop_type_t_ESP_BT_GAP_DEV_PROP_COD => {
-        let cod = unsafe { *(prop.val as *const u32) };
-        device.cod = Some(cod);
-        // info!("bt-gap:   class: {:08x}", cod);
-      }
-      esp_bt_gap_dev_prop_type_t_ESP_BT_GAP_DEV_PROP_RSSI => {
-        let rssi = unsafe { *(prop.val as *const i8) };
-        device.rssi = Some(rssi);
-        // info!("bt-gap:   rssi: {}", rssi);
-      }
-      esp_bt_gap_dev_prop_type_t_ESP_BT_GAP_DEV_PROP_EIR => {
-        // let eir = unsafe { slice::from_raw_parts(prop.val as *const u8, prop.len as usize) };
-        // let eir = eir.iter().map(|&x| format!("{:02x}", x)).collect::<Vec<_>>().join(" ");
-        // info!("bt-gap:   eir: {}", eir);
-        // TODO: call esp_bt_gap_resolve_eir_data to retrieve device name (ESP_BT_EIR_TYPE_CMPL_LOCAL_NAME, ESP_BT_EIR_TYPE_SHORT_LOCAL_NAME)
-      }
-      _ => {}
-    }
-  }
-
-  device
 }
 
 struct DiscoveryManager {
@@ -711,21 +682,72 @@ impl DiscoveryManager {
   }
 }
 
-#[allow(clippy::unusual_byte_groupings)]
-fn is_keyboard_cod(cod: u32) -> bool {
-  // https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Assigned_Numbers/out/en/Assigned_Numbers.pdf
-  // class of device
-  // - reserved_2:  2 bits
-  // - minor:       6 bits
-  // - major:       5 bits
-  // - service:    11 bits
-  // - reserved_8:  8 bits
+#[derive(Debug, new)]
+struct BtDevice {
+  bda: [u8; 6],
+  name: Option<String>,
+  rssi: Option<i8>,
+  cod: Option<u32>,
+}
+impl BtDevice {
+  fn merge(&mut self, other: BtDevice) {
+    if let Some(name) = other.name {
+      self.name = Some(name);
+    }
+    if let Some(rssi) = other.rssi {
+      if let Some(self_rssi) = self.rssi {
+        self.rssi = Some(self_rssi.max(rssi));
+      } else {
+        self.rssi = Some(rssi);
+      }
+    }
+    if let Some(cod) = other.cod {
+      self.cod = Some(cod);
+    }
+  }
+  fn is_keyboard(&self) -> bool {
+    if let Some(cod) = self.cod {
+      is_keyboard_cod(cod)
+    } else {
+      false
+    }
+  }
+}
 
-  // example of cod for keyboard:
-  // unused   service     major minor  unused
-  // 00000000 00000000001 00101 010000 00
-  //                      ^^^^^  ^
-  //                 peripheral  keyboard
+fn parse_bt_device_result(disc_res: esp_bt_gap_cb_param_t_disc_res_param) -> BtDevice {
+  let bda = disc_res.bda;
+  let mut device = BtDevice::new(bda, None, None, None);
 
-  (cod & 0b00000000_00000000000_11111_010000_00) == 0b00000000_00000000000_00101_010000_00
+  // let bda = bda.iter().map(|&x| format!("{:02x}", x)).collect::<Vec<_>>().join(":");
+  // info!("bt-gap: device found: {}", bda);
+
+  let props = unsafe { slice::from_raw_parts(disc_res.prop, disc_res.num_prop as usize) };
+  for prop in props {
+    match prop.type_ {
+      esp_bt_gap_dev_prop_type_t_ESP_BT_GAP_DEV_PROP_BDNAME => {
+        let name = unsafe { CStr::from_ptr(prop.val as *const i8).to_str().unwrap() };
+        device.name = Some(name.to_string());
+        // info!("bt-gap:   name: {}", name);
+      }
+      esp_bt_gap_dev_prop_type_t_ESP_BT_GAP_DEV_PROP_COD => {
+        let cod = unsafe { *(prop.val as *const u32) };
+        device.cod = Some(cod);
+        // info!("bt-gap:   class: {:08x}", cod);
+      }
+      esp_bt_gap_dev_prop_type_t_ESP_BT_GAP_DEV_PROP_RSSI => {
+        let rssi = unsafe { *(prop.val as *const i8) };
+        device.rssi = Some(rssi);
+        // info!("bt-gap:   rssi: {}", rssi);
+      }
+      esp_bt_gap_dev_prop_type_t_ESP_BT_GAP_DEV_PROP_EIR => {
+        // let eir = unsafe { slice::from_raw_parts(prop.val as *const u8, prop.len as usize) };
+        // let eir = eir.iter().map(|&x| format!("{:02x}", x)).collect::<Vec<_>>().join(" ");
+        // info!("bt-gap:   eir: {}", eir);
+        // TODO: call esp_bt_gap_resolve_eir_data to retrieve device name (ESP_BT_EIR_TYPE_CMPL_LOCAL_NAME, ESP_BT_EIR_TYPE_SHORT_LOCAL_NAME)
+      }
+      _ => {}
+    }
+  }
+
+  device
 }

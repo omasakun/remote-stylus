@@ -1,6 +1,6 @@
 use std::{
   ffi::CString,
-  mem,
+  mem, slice,
   thread::{sleep, spawn},
   time::Duration,
 };
@@ -216,7 +216,7 @@ pub fn ble_gap_event_name(event: esp_gap_ble_cb_event_t) -> String {
     .unwrap_or_else(|| format!("Unknown({})", event))
 }
 
-pub fn bt_gap_event_name(event: esp_gap_ble_cb_event_t) -> String {
+pub fn bt_gap_event_name(event: esp_bt_gap_cb_event_t) -> String {
   let names = [
     "DISC_RES",
     "DISC_STATE_CHANGED",
@@ -228,6 +228,15 @@ pub fn bt_gap_event_name(event: esp_gap_ble_cb_event_t) -> String {
     "KEY_NOTIF",
     "KEY_REQ",
     "READ_RSSI_DELTA",
+    "CONFIG_EIR_DATA",
+    "SET_AFH_CHANNELS",
+    "READ_REMOTE_NAME",
+    "MODE_CHG",
+    "REMOVE_BOND_DEV_COMPLETE",
+    "QOS_CMPL",
+    "ACL_CONN_CMPL_STAT",
+    "ACL_DISCONN_CMPL_STAT",
+    "ACL_PKT_TYPE_CHANGED",
   ];
   names
     .get(event as usize)
@@ -249,6 +258,25 @@ pub fn ble_key_type_name(key_type: esp_ble_key_type_t) -> String {
     _ => "INVALID",
   }
   .to_string()
+}
+
+#[allow(clippy::unusual_byte_groupings)]
+pub fn is_keyboard_cod(cod: u32) -> bool {
+  // https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Assigned_Numbers/out/en/Assigned_Numbers.pdf
+  // class of device
+  // - reserved_2:  2 bits
+  // - minor:       6 bits
+  // - major:       5 bits
+  // - service:    11 bits
+  // - reserved_8:  8 bits
+
+  // example of cod for keyboard:
+  // unused   service     major minor  unused
+  // 00000000 00000000001 00101 010000 00
+  //                      ^^^^^  ^
+  //                 peripheral  keyboard
+
+  (cod & 0b00000000_00000000000_11111_010000_00) == 0b00000000_00000000000_00101_010000_00
 }
 
 pub fn char_to_code(key: u8) -> [u8; 8] {
@@ -287,4 +315,14 @@ pub fn char_to_code(key: u8) -> [u8; 8] {
     }
   };
   data
+}
+
+pub fn hex_from_raw_data(data: *const u8, len: usize) -> String {
+  unsafe {
+    slice::from_raw_parts(data, len)
+      .iter()
+      .map(|&x| format!("{:02x}", x))
+      .collect::<Vec<_>>()
+      .join(" ")
+  }
 }
