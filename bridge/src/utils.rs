@@ -1,6 +1,6 @@
 use std::{
   ffi::CString,
-  mem::size_of,
+  mem,
   thread::{sleep, spawn},
   time::Duration,
 };
@@ -141,7 +141,7 @@ pub const KEYBOARD_REPORT_MAP: [u8; 65] = [
 
 pub fn ble_gap_set_security_param<T>(param: esp_ble_sm_param_t, value: &T) {
   let value = value as *const T as _;
-  let len = size_of::<T>() as _;
+  let len = mem::size_of::<T>() as _;
   unsafe { esp_nofail!(esp_ble_gap_set_security_param(param, value, len)) }
 }
 
@@ -179,7 +179,7 @@ pub fn bt_controller_config_default(mode: esp_bt_mode_t) -> esp_bt_controller_co
   }
 }
 
-pub fn gap_ble_event_name(event: esp_gap_ble_cb_event_t) -> String {
+pub fn ble_gap_event_name(event: esp_gap_ble_cb_event_t) -> String {
   let names = [
     "ADV_DATA_SET_COMPLETE",
     "SCAN_RSP_DATA_SET_COMPLETE",
@@ -209,6 +209,25 @@ pub fn gap_ble_event_name(event: esp_gap_ble_cb_event_t) -> String {
     "GET_BOND_DEV_COMPLETE",
     "READ_RSSI_COMPLETE",
     "UPDATE_WHITELIST_COMPLETE",
+  ];
+  names
+    .get(event as usize)
+    .map(|s| s.to_string())
+    .unwrap_or_else(|| format!("Unknown({})", event))
+}
+
+pub fn bt_gap_event_name(event: esp_gap_ble_cb_event_t) -> String {
+  let names = [
+    "DISC_RES",
+    "DISC_STATE_CHANGED",
+    "RMT_SRVCS",
+    "RMT_SRVC_REC",
+    "AUTH_CMPL",
+    "PIN_REQ",
+    "CFM_REQ",
+    "KEY_NOTIF",
+    "KEY_REQ",
+    "READ_RSSI_DELTA",
   ];
   names
     .get(event as usize)
