@@ -1,7 +1,5 @@
 # HID Bridge
 
-See [esp-rs/esp-idf-template](https://github.com/esp-rs/esp-idf-template) for more information.
-
 ## Setup & Flash
 
 - Compilation on windows might not work due to the long path names. WSL2 is recommended.
@@ -16,7 +14,6 @@ winget install usbipd       # wsl2 (usb binding)
 cargo install ldproxy
 cargo install espup
 cargo install espflash
-cargo install cargo-espflash
 
 espup install
 
@@ -30,6 +27,8 @@ usbipd attach --wsl --busid <busid>
 # Build and flash
 cargo run
 ```
+
+See [esp-rs/esp-idf-template](https://github.com/esp-rs/esp-idf-template) for more information.
 
 ## References
 
