@@ -11,37 +11,34 @@
 
 #![allow(non_upper_case_globals)]
 
+mod hidd;
+mod hidh;
 mod lorem;
+mod scan;
 mod utils;
 
 use std::{
-  ffi::{CStr, CString},
-  mem, slice,
   sync::{
-    mpsc::{self, Sender, TryRecvError},
+    mpsc::{self, TryRecvError},
     Arc, Mutex,
   },
   thread::{sleep, spawn},
   time::Duration,
 };
 
-use derive_new::new;
 use esp_idf_svc::{log::EspLogger, sys::*};
 use log::{error, info};
-use once_cell::sync::OnceCell;
-use utils::{char_to_code, hex_from_raw_data, is_keyboard_cod, KEYBOARD_REPORT_MAP};
 
 use crate::{
+  hidd::{init_hid_device, notify_gap_auth_success, HidDevice, HidDeviceHandler},
+  hidh::{init_hid_host, open_hid_device, HidHostHandler},
   lorem::LOREM_IPSUM,
+  scan::{notify_discovery_finished, notify_discovery_result, scan_bluetooth},
   utils::{
-    ble_gap_event_name, ble_gap_set_device_name, ble_gap_set_security_param, ble_key_type_name,
-    bt_controller_config_default, bt_gap_event_name, initialize_nvs,
+    ble_gap_event_name, ble_key_type_name, bt_controller_config_default, bt_gap_event_name, initialize_nvs, BdAddr,
+    KEYBOARD_REPORT_MAP,
   },
 };
-
-static DISCOVERY_MANAGER: OnceCell<Mutex<DiscoveryManager>> = OnceCell::new();
-static TYPING_TASK: OnceCell<TypingTask> = OnceCell::new();
-static SCAN_TASK: OnceCell<ScanTask> = OnceCell::new();
 
 fn main() {
   // It is necessary to call this function once.
@@ -62,72 +59,20 @@ fn main() {
     esp_nofail!(esp_bluedroid_init());
     esp_nofail!(esp_bluedroid_enable());
 
-    // If pin_type is ESP_BT_PIN_TYPE_VARIABLE, pin_code and pin_code_len will be ignored,
-    // and ESP_BT_GAP_PIN_REQ_EVT will come when control requests for pin code
-    esp_nofail!(esp_bt_gap_set_pin(
-      esp_bt_pin_type_t_ESP_BT_PIN_TYPE_VARIABLE,
-      0,
-      [0; 16].as_mut_ptr()
-    ));
-
     esp_nofail!(esp_bt_gap_register_callback(Some(bt_gap_callback)));
     esp_nofail!(esp_ble_gap_register_callback(Some(ble_gap_callback)));
-
-    // Allow BT devices to connect back to us
-    esp_nofail!(esp_bt_gap_set_scan_mode(
-      esp_bt_connection_mode_t_ESP_BT_CONNECTABLE,
-      esp_bt_discovery_mode_t_ESP_BT_NON_DISCOVERABLE
-    ));
   }
 
-  let device_name = "Keyboard Bridge";
-  let manufacturer = "Remote Desktop";
-  let serial_number = "0137";
-
-  esp_hid_ble_gap_adv_init(device_name);
-
-  unsafe { esp_nofail!(esp_ble_gatts_register_callback(Some(esp_hidd_gatts_event_handler))) }
-  unsafe { esp_nofail!(esp_ble_gattc_register_callback(Some(esp_hidh_gattc_event_handler))) }
-
-  let hid_dev = ble_hidd_init(
-    device_name,
-    manufacturer,
-    serial_number,
-    &KEYBOARD_REPORT_MAP,
-    Some(hidd_event_callback),
-  );
-
-  unsafe {
-    esp_nofail!(esp_hidh_init(&esp_hidh_config_t {
-      callback: Some(hidh_event_callback),
-      event_stack_size: 4096,
-      callback_arg: std::ptr::null_mut(),
-    }))
-  }
-
-  // spawn_heap_logger();
-
-  DISCOVERY_MANAGER.get_or_init(|| Mutex::new(DiscoveryManager::new()));
-  TYPING_TASK.get_or_init(|| TypingTask::new(hid_dev));
-  SCAN_TASK.get_or_init(ScanTask::new);
-
-  // loop {
-  //   info!("main thread is alive");
-  //   sleep(Duration::from_secs(100));
-  // }
+  init_hid_device("Keyboard Bridge", "o137", "0137", &KEYBOARD_REPORT_MAP, TypingTask::new).unwrap();
+  init_hid_host(ReceiveTask::new()).unwrap();
 }
-
-// TODO: I don't know if this is actually safe to do
-struct HiddDevBox(*mut esp_hidd_dev_t);
-unsafe impl Send for HiddDevBox {}
 
 struct TypingTask {
   resume: mpsc::Sender<()>,
   pause: mpsc::Sender<()>,
 }
 impl TypingTask {
-  fn new(hid_dev: *mut esp_hidd_dev_t) -> Self {
-    let hid_dev = HiddDevBox(hid_dev);
+  fn new(device: HidDevice) -> Self {
     let (resume_tx, resume_rx) = mpsc::channel();
     let (pause_tx, pause_rx) = mpsc::channel();
     let this = Self {
@@ -135,19 +80,19 @@ impl TypingTask {
       pause: pause_tx,
     };
 
-    fn task(hid_dev: &HiddDevBox, i: &mut usize) {
-      let hid_dev = hid_dev.0;
-
+    fn task(device: &HidDevice, i: &mut usize) {
       sleep(Duration::from_secs(1));
-
-      // info!("typing task: typing");
 
       let c = LOREM_IPSUM.as_bytes()[*i];
       *i = (*i + 1) % LOREM_IPSUM.len();
 
-      hidd_send_keyboard_press(hid_dev, c);
+      let _ = device
+        .send_keyboard_press(c)
+        .inspect_err(|e| error!("failed to send key press: {:?}", e));
       sleep(Duration::from_millis(10));
-      hidd_send_keyboard_release(hid_dev);
+      let _ = device
+        .send_keyboard_release()
+        .inspect_err(|e| error!("failed to send key release: {:?}", e));
       sleep(Duration::from_millis(10));
     }
 
@@ -177,24 +122,26 @@ impl TypingTask {
             return;
           }
         }
-        task(&hid_dev, &mut i);
+        task(&device, &mut i);
       }
     });
     this
   }
-  fn on_hidd_resume(&self) {
+}
+impl HidDeviceHandler for TypingTask {
+  fn on_resume(&self) {
     self.resume.send(()).unwrap();
   }
-  fn on_hidd_pause(&self) {
+  fn on_pause(&self) {
     self.pause.send(()).unwrap();
   }
 }
 
 #[derive(Clone)]
-struct ScanTask {
+struct ReceiveTask {
   scanning: Arc<Mutex<bool>>,
 }
-impl ScanTask {
+impl ReceiveTask {
   fn new() -> Self {
     let this = Self {
       scanning: Arc::new(Mutex::new(true)),
@@ -209,8 +156,7 @@ impl ScanTask {
         }
 
         info!("scan task: scanning");
-
-        let devices = bt_hidh_scan(Duration::from_secs(5));
+        let devices = scan_bluetooth(Duration::from_secs(5));
         if !this.is_scanning() {
           continue;
         }
@@ -226,16 +172,9 @@ impl ScanTask {
         }
         if let Some(keyboard) = keyboard {
           info!("scan task: connecting to keyboard: {:?}", keyboard);
-          let _ = unsafe {
-            esp!(esp_hidh_dev_open(
-              keyboard.bda.as_ptr() as _,
-              esp_hid_transport_t_ESP_HID_TRANSPORT_BT,
-              0
-            ))
-          }
-          .inspect_err(|e| {
+          if let Err(e) = open_hid_device(keyboard.bda) {
             error!("failed to open hid device: {:?}", e);
-          });
+          }
           this.set_scanning(false);
         }
       }
@@ -248,318 +187,28 @@ impl ScanTask {
   fn set_scanning(&self, scanning: bool) {
     *self.scanning.lock().unwrap() = scanning;
   }
-  fn on_hidh_open(&self, status: esp_err_t) {
-    if status == ESP_OK {
-      self.set_scanning(false);
-    } else {
-      self.set_scanning(true);
-    }
+}
+impl HidHostHandler for ReceiveTask {
+  fn on_open(&self, _addr: BdAddr) {
+    self.set_scanning(false);
   }
-  fn on_hidh_close(&self) {
+  fn on_open_failed(&self, _error: EspError) {
     self.set_scanning(true);
   }
-  fn on_hidh_input(&self, usage_type: esp_hid_usage_t, data: &[u8]) {
-    if usage_type & esp_hid_usage_t_ESP_HID_USAGE_KEYBOARD == esp_hid_usage_t_ESP_HID_USAGE_KEYBOARD {
+  fn on_close(&self, _addr: BdAddr) {
+    self.set_scanning(true);
+  }
+  fn on_input(&self, _addr: BdAddr, usage: hidh::HidUsage, _map_index: u8, _report_id: u16, _data: &[u8]) {
+    if usage.is_keyboard() {
       // https://usb.org/sites/default/files/hut1_22.pdf
       // TODO: send key press/release
     }
   }
 }
 
-fn bt_hidh_scan(duration: Duration) -> Vec<BtDevice> {
-  let duration = duration.as_secs() as f64 / 1.28;
-  let duration = duration as u8;
-
-  let (tx, rx) = mpsc::channel();
-
-  if let Some(manager) = DISCOVERY_MANAGER.get() {
-    let mut manager = manager.lock().unwrap();
-    manager.start_discovery(tx);
-  } else {
-    panic!("discovery manager not initialized");
-  }
-
-  unsafe {
-    esp_nofail!(esp_bt_gap_start_discovery(
-      esp_bt_inq_mode_t_ESP_BT_INQ_MODE_GENERAL_INQUIRY,
-      duration,
-      0
-    ))
-  };
-
-  rx.recv().unwrap()
-}
-
-extern "C" fn hidh_event_callback(
-  _handler_args: *mut std::ffi::c_void,
-  _base: esp_event_base_t,
-  event: i32,
-  param: *mut std::ffi::c_void,
-) {
-  let event = event as esp_hidh_event_t;
-  let param = param as *mut esp_hidh_event_data_t;
-  let param = unsafe { &*param };
-
-  match event {
-    esp_hidh_event_t_ESP_HIDH_START_EVENT => {
-      info!("hidh: start");
-    }
-    esp_hidh_event_t_ESP_HIDH_OPEN_EVENT => {
-      let open = unsafe { param.open };
-      if open.status == ESP_OK {
-        let bda = get_hidh_dev_bda(open.dev);
-        info!("hidh[{}]: open", bda);
-      } else {
-        info!("hidh: open failed: {}", open.status);
-      }
-      if let Some(task) = SCAN_TASK.get() {
-        task.on_hidh_open(open.status);
-      }
-    }
-    esp_hidh_event_t_ESP_HIDH_BATTERY_EVENT => {
-      let battery = unsafe { param.battery };
-      let bda = get_hidh_dev_bda(battery.dev);
-      info!("hidh[{}]: battery: {}%", bda, battery.level);
-    }
-    esp_hidh_event_t_ESP_HIDH_INPUT_EVENT => {
-      let input = unsafe { param.input };
-      let bda = get_hidh_dev_bda(input.dev);
-      let usage_type = unsafe { esp_hid_usage_str(input.usage) };
-      let usage_type = unsafe { CStr::from_ptr(usage_type).to_str().unwrap() };
-      let data = hex_from_raw_data(input.data, input.length as usize);
-      info!(
-        "hidh[{}]: input: {}, map: {}, id: {}, data: {}",
-        bda, usage_type, input.map_index, input.report_id, data
-      );
-      if let Some(task) = SCAN_TASK.get() {
-        task.on_hidh_input(input.usage, unsafe {
-          slice::from_raw_parts(input.data, input.length as usize)
-        });
-      }
-    }
-    esp_hidh_event_t_ESP_HIDH_FEATURE_EVENT => {
-      let feature = unsafe { param.feature };
-      let bda = get_hidh_dev_bda(feature.dev);
-      let usage_type = unsafe { esp_hid_usage_str(feature.usage) };
-      let usage_type = unsafe { CStr::from_ptr(usage_type).to_str().unwrap() };
-      let data = hex_from_raw_data(feature.data, feature.length as usize);
-      info!(
-        "hidh[{}]: feature: {}, map: {}, id: {}, data: {}",
-        bda, usage_type, feature.map_index, feature.report_id, data
-      );
-    }
-    esp_hidh_event_t_ESP_HIDH_CLOSE_EVENT => {
-      let close = unsafe { param.close };
-      let bda = get_hidh_dev_bda(close.dev);
-      info!("hidh[{}]: close", bda);
-      if let Some(task) = SCAN_TASK.get() {
-        task.on_hidh_close();
-      }
-    }
-    esp_hidh_event_t_ESP_HIDH_STOP_EVENT => {
-      info!("hidh: stop");
-    }
-    _ => {
-      info!("hidh: unhandled event: {:?}", event);
-    }
-  }
-}
-
-fn get_hidh_dev_bda(dev: *mut esp_hidh_dev_t) -> String {
-  let bda = unsafe { esp_hidh_dev_bda_get(dev) };
-  let bda = unsafe {
-    slice::from_raw_parts(bda, 6)
-      .iter()
-      .map(|&x| format!("{:02x}", x))
-      .collect::<Vec<_>>()
-      .join(":")
-  };
-  bda
-}
-
-fn ble_hidd_init(
-  device_name: &str,
-  manufacturer: &str,
-  serial_number: &str,
-  report_map: &[u8],
-  callback: esp_event_handler_t,
-) -> *mut esp_hidd_dev_t {
-  let mut hid_dev: *mut esp_hidd_dev_t = std::ptr::null_mut();
-
-  let device_name = CString::new(device_name).unwrap();
-  let manufacturer = CString::new(manufacturer).unwrap();
-  let serial_number = CString::new(serial_number).unwrap();
-  let hid_config = esp_hid_device_config_t {
-    vendor_id: 0x16c0,
-    product_id: 0x05df,
-    version: 0x0100,
-    device_name: device_name.as_ptr() as _,
-    manufacturer_name: manufacturer.as_ptr() as _,
-    serial_number: serial_number.as_ptr() as _,
-    report_maps: &mut esp_hid_raw_report_map_t {
-      data: report_map.as_ptr(),
-      len: report_map.len() as _,
-    } as _,
-    report_maps_len: 1,
-  };
-
-  unsafe {
-    esp_nofail!(esp_hidd_dev_init(
-      &hid_config,
-      esp_hid_transport_t_ESP_HID_TRANSPORT_BLE,
-      callback,
-      &mut hid_dev as _
-    ))
-  };
-  hid_dev
-}
-
-extern "C" fn hidd_event_callback(
-  _handler_args: *mut std::ffi::c_void,
-  _base: esp_event_base_t,
-  event: i32,
-  param: *mut std::ffi::c_void,
-) {
-  let event = event as esp_hidd_event_t;
-  let param = param as *mut esp_hidd_event_data_t;
-  let param = unsafe { &*param };
-
-  match event {
-    esp_hidd_event_t_ESP_HIDD_START_EVENT => {
-      info!("hidd: start");
-      esp_hid_ble_gap_adv_start();
-    }
-    esp_hidd_event_t_ESP_HIDD_CONNECT_EVENT => {
-      info!("hidd: connect");
-    }
-    esp_hidd_event_t_ESP_HIDD_PROTOCOL_MODE_EVENT => {
-      let protocol_mode = unsafe { &param.protocol_mode };
-      let mode = unsafe { esp_hid_protocol_mode_str(protocol_mode.protocol_mode) };
-      let mode = unsafe { CStr::from_ptr(mode).to_str().unwrap() };
-      info!("hidd: protocol mode[{}] -> {}", protocol_mode.map_index, mode);
-    }
-    esp_hidd_event_t_ESP_HIDD_CONTROL_EVENT => {
-      let control = unsafe { &param.control };
-      let operation = if control.control == 1 {
-        "exit_suspend"
-      } else {
-        "enter_suspend"
-      };
-      info!("hidd: control[{}] -> {}", control.map_index, operation);
-      if let Some(task) = TYPING_TASK.get() {
-        if control.control == 1 {
-          task.on_hidd_resume();
-        } else {
-          task.on_hidd_pause();
-        }
-      }
-    }
-    esp_hidd_event_t_ESP_HIDD_OUTPUT_EVENT => {
-      let output = unsafe { &param.output };
-      let data = hex_from_raw_data(output.data, output.length as usize);
-      info!("hidd: output[{}]: {:}", output.map_index, data);
-    }
-    esp_hidd_event_t_ESP_HIDD_FEATURE_EVENT => {
-      let feature = unsafe { &param.feature };
-      info!("hidd: feature[{}]: {:?}", feature.map_index, feature);
-    }
-    esp_hidd_event_t_ESP_HIDD_DISCONNECT_EVENT => {
-      let disconnect = unsafe { &param.disconnect };
-      let reason =
-        unsafe { esp_hid_disconnect_reason_str(esp_hidd_dev_transport_get(disconnect.dev), disconnect.reason) };
-      let reason = unsafe { CStr::from_ptr(reason).to_str().unwrap() };
-      info!("hidd: disconnect: {}", reason);
-      if let Some(task) = TYPING_TASK.get() {
-        task.on_hidd_pause();
-      }
-      esp_hid_ble_gap_adv_start();
-    }
-    esp_hidd_event_t_ESP_HIDD_STOP_EVENT => {
-      info!("hidd: stop");
-    }
-    _ => {
-      info!("hidd: unhandled event: {:?}", event);
-    }
-  }
-}
-
-fn hidd_send_keyboard_press(hid_dev: *mut esp_hidd_dev_t, key: u8) {
-  let mut data = char_to_code(key);
-  let _ = unsafe { esp!(esp_hidd_dev_input_set(hid_dev, 0, 1, data.as_mut_ptr(), data.len())) }.inspect_err(|e| {
-    error!("failed to send keyboard input: {:?}", e);
-  });
-}
-
-fn hidd_send_keyboard_release(hid_dev: *mut esp_hidd_dev_t) {
-  let mut data = [0; 8];
-  let _ = unsafe { esp!(esp_hidd_dev_input_set(hid_dev, 0, 1, data.as_mut_ptr(), data.len())) }.inspect_err(|e| {
-    error!("failed to send keyboard input: {:?}", e);
-  });
-}
-
-fn esp_hid_ble_gap_adv_init(device_name: &str) {
-  let appearance = ESP_BLE_APPEARANCE_HID_KEYBOARD;
-
-  // https://www.bluetooth.com/specifications/assigned-numbers/
-  // UUID for human interface device service
-  let mut hidd_service_uuid: [u8; 16] = [
-    0xfb, 0x34, 0x9b, 0x5f, 0x80, 0x00, 0x00, 0x80, 0x00, 0x10, 0x00, 0x00, 0x12, 0x18, 0x00, 0x00,
-  ];
-
-  let mut adv_data = esp_ble_adv_data_t {
-    set_scan_rsp: false,
-    include_name: true,
-    include_txpower: true,
-    min_interval: 0x0006, // time = min_interval * 1.25 ms
-    max_interval: 0x0010, // time = max_interval * 1.25 ms
-    appearance: appearance as _,
-    manufacturer_len: 0,
-    p_manufacturer_data: std::ptr::null_mut(),
-    service_data_len: 0,
-    p_service_data: std::ptr::null_mut(),
-    service_uuid_len: hidd_service_uuid.len() as _,
-    p_service_uuid: hidd_service_uuid.as_mut_ptr(),
-    flag: 0x6,
-  };
-
-  // https://github.com/espressif/esp-idf/blob/master/examples/bluetooth/bluedroid/ble/gatt_security_server/tutorial/Gatt_Security_Server_Example_Walkthrough.md
-  let auth_req = ESP_LE_AUTH_REQ_SC_MITM_BOND;
-  let iocap = ESP_IO_CAP_NONE;
-  let init_key = ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK;
-  let rsp_key = ESP_BLE_ENC_KEY_MASK | ESP_BLE_ID_KEY_MASK;
-  let key_size = 16;
-  let passkey = 0;
-
-  ble_gap_set_security_param(esp_ble_sm_param_t_ESP_BLE_SM_AUTHEN_REQ_MODE, &auth_req);
-  ble_gap_set_security_param(esp_ble_sm_param_t_ESP_BLE_SM_IOCAP_MODE, &iocap);
-  ble_gap_set_security_param(esp_ble_sm_param_t_ESP_BLE_SM_SET_INIT_KEY, &init_key);
-  ble_gap_set_security_param(esp_ble_sm_param_t_ESP_BLE_SM_SET_RSP_KEY, &rsp_key);
-  ble_gap_set_security_param(esp_ble_sm_param_t_ESP_BLE_SM_MAX_KEY_SIZE, &key_size);
-  ble_gap_set_security_param(esp_ble_sm_param_t_ESP_BLE_SM_SET_STATIC_PASSKEY, &passkey);
-
-  ble_gap_set_device_name(device_name);
-  unsafe { esp_nofail!(esp_ble_gap_config_adv_data(&mut adv_data)) }
-}
-
-fn esp_hid_ble_gap_adv_start() {
-  let mut hidd_adv_params = esp_ble_adv_params_t {
-    adv_int_min: 0x20,
-    adv_int_max: 0x30,
-    adv_type: esp_ble_adv_type_t_ADV_TYPE_IND,
-    own_addr_type: esp_ble_addr_type_t_BLE_ADDR_TYPE_PUBLIC,
-    channel_map: esp_ble_adv_channel_t_ADV_CHNL_ALL,
-    adv_filter_policy: esp_ble_adv_filter_t_ADV_FILTER_ALLOW_SCAN_ANY_CON_ANY,
-    ..Default::default()
-  };
-  unsafe { esp_nofail!(esp_ble_gap_start_advertising(&mut hidd_adv_params)) }
-}
-
 extern "C" fn ble_gap_callback(event: esp_gap_ble_cb_event_t, param: *mut esp_ble_gap_cb_param_t) {
   let param = unsafe { &*param };
   match event {
-    // scan
-    // advertise
-    // authentication
     esp_gap_ble_cb_event_t_ESP_GAP_BLE_KEY_EVT => {
       let ble_key = unsafe { param.ble_security.ble_key };
       info!("ble-gap: key type: {}", ble_key_type_name(ble_key.key_type));
@@ -573,11 +222,9 @@ extern "C" fn ble_gap_callback(event: esp_gap_ble_cb_event_t, param: *mut esp_bl
       let auth_cmpl = unsafe { param.ble_security.auth_cmpl };
       if auth_cmpl.success {
         info!("ble-gap: auth success");
+        notify_gap_auth_success();
       } else {
         info!("ble-gap: auth failed: {}", auth_cmpl.fail_reason);
-      }
-      if let Some(task) = TYPING_TASK.get() {
-        task.on_hidd_resume();
       }
     }
     esp_gap_ble_cb_event_t_ESP_GAP_BLE_UPDATE_CONN_PARAMS_EVT => {
@@ -598,19 +245,12 @@ extern "C" fn bt_gap_callback(event: esp_bt_gap_cb_event_t, param: *mut esp_bt_g
       let state = if state_change.state == 0 { "stopped" } else { "started" };
       info!("bt-gap: discovery {}", state);
       if state_change.state == 0 {
-        if let Some(manager) = DISCOVERY_MANAGER.get() {
-          let mut manager = manager.lock().unwrap();
-          manager.finish_discovery();
-        }
+        notify_discovery_finished();
       }
     }
     esp_bt_gap_cb_event_t_ESP_BT_GAP_DISC_RES_EVT => {
       let disc_res = unsafe { param.disc_res };
-      let device = parse_bt_device_result(disc_res);
-      if let Some(manager) = DISCOVERY_MANAGER.get() {
-        let mut manager = manager.lock().unwrap();
-        manager.add_result(device);
-      }
+      notify_discovery_result(disc_res);
     }
     esp_bt_gap_cb_event_t_ESP_BT_GAP_MODE_CHG_EVT => {
       let mode_chg = unsafe { param.mode_chg };
@@ -646,108 +286,4 @@ extern "C" fn bt_gap_callback(event: esp_bt_gap_cb_event_t, param: *mut esp_bt_g
       info!("bt-gap: {}", bt_gap_event_name(event));
     }
   }
-}
-
-struct DiscoveryManager {
-  devices: Vec<BtDevice>,
-  callback: Option<Sender<Vec<BtDevice>>>,
-}
-impl DiscoveryManager {
-  fn new() -> Self {
-    Self {
-      devices: vec![],
-      callback: None,
-    }
-  }
-  fn start_discovery(&mut self, callback: Sender<Vec<BtDevice>>) {
-    assert!(self.callback.is_none(), "discovery already in progress");
-    self.devices.clear();
-    self.callback = Some(callback);
-  }
-  fn add_result(&mut self, device: BtDevice) {
-    match self.devices.iter().position(|d| d.bda == device.bda) {
-      Some(i) => {
-        self.devices[i].merge(device);
-      }
-      None => {
-        self.devices.push(device);
-      }
-    }
-  }
-  fn finish_discovery(&mut self) {
-    let devices = mem::take(&mut self.devices);
-    if let Some(callback) = self.callback.take() {
-      callback.send(devices).unwrap();
-    }
-  }
-}
-
-#[derive(Debug, new)]
-struct BtDevice {
-  bda: [u8; 6],
-  name: Option<String>,
-  rssi: Option<i8>,
-  cod: Option<u32>,
-}
-impl BtDevice {
-  fn merge(&mut self, other: BtDevice) {
-    if let Some(name) = other.name {
-      self.name = Some(name);
-    }
-    if let Some(rssi) = other.rssi {
-      if let Some(self_rssi) = self.rssi {
-        self.rssi = Some(self_rssi.max(rssi));
-      } else {
-        self.rssi = Some(rssi);
-      }
-    }
-    if let Some(cod) = other.cod {
-      self.cod = Some(cod);
-    }
-  }
-  fn is_keyboard(&self) -> bool {
-    if let Some(cod) = self.cod {
-      is_keyboard_cod(cod)
-    } else {
-      false
-    }
-  }
-}
-
-fn parse_bt_device_result(disc_res: esp_bt_gap_cb_param_t_disc_res_param) -> BtDevice {
-  let bda = disc_res.bda;
-  let mut device = BtDevice::new(bda, None, None, None);
-
-  // let bda = bda.iter().map(|&x| format!("{:02x}", x)).collect::<Vec<_>>().join(":");
-  // info!("bt-gap: device found: {}", bda);
-
-  let props = unsafe { slice::from_raw_parts(disc_res.prop, disc_res.num_prop as usize) };
-  for prop in props {
-    match prop.type_ {
-      esp_bt_gap_dev_prop_type_t_ESP_BT_GAP_DEV_PROP_BDNAME => {
-        let name = unsafe { CStr::from_ptr(prop.val as *const i8).to_str().unwrap() };
-        device.name = Some(name.to_string());
-        // info!("bt-gap:   name: {}", name);
-      }
-      esp_bt_gap_dev_prop_type_t_ESP_BT_GAP_DEV_PROP_COD => {
-        let cod = unsafe { *(prop.val as *const u32) };
-        device.cod = Some(cod);
-        // info!("bt-gap:   class: {:08x}", cod);
-      }
-      esp_bt_gap_dev_prop_type_t_ESP_BT_GAP_DEV_PROP_RSSI => {
-        let rssi = unsafe { *(prop.val as *const i8) };
-        device.rssi = Some(rssi);
-        // info!("bt-gap:   rssi: {}", rssi);
-      }
-      esp_bt_gap_dev_prop_type_t_ESP_BT_GAP_DEV_PROP_EIR => {
-        // let eir = unsafe { slice::from_raw_parts(prop.val as *const u8, prop.len as usize) };
-        // let eir = eir.iter().map(|&x| format!("{:02x}", x)).collect::<Vec<_>>().join(" ");
-        // info!("bt-gap:   eir: {}", eir);
-        // TODO: call esp_bt_gap_resolve_eir_data to retrieve device name (ESP_BT_EIR_TYPE_CMPL_LOCAL_NAME, ESP_BT_EIR_TYPE_SHORT_LOCAL_NAME)
-      }
-      _ => {}
-    }
-  }
-
-  device
 }

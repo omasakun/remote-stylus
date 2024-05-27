@@ -1,5 +1,6 @@
 use std::{
   ffi::CString,
+  fmt::{Debug, Display},
   mem, slice,
   thread::{sleep, spawn},
   time::Duration,
@@ -7,14 +8,6 @@ use std::{
 
 use esp_idf_svc::sys::*;
 use log::{error, info, warn};
-
-/// Macro to move a value to the heap and don't free it
-macro_rules! leak {
-  ($val:expr) => {
-    // TODO: check all the places where this macro is used and ensure that the memory is freed
-    Box::into_raw(Box::new($val))
-  };
-}
 
 pub fn initialize_nvs() {
   unsafe {
@@ -42,66 +35,35 @@ pub fn spawn_heap_logger() {
   });
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct BdAddr([u8; 6]);
+impl BdAddr {
+  pub fn raw(&self) -> [u8; 6] {
+    self.0
+  }
+}
+impl From<[u8; 6]> for BdAddr {
+  fn from(value: [u8; 6]) -> Self {
+    Self(value)
+  }
+}
+impl Display for BdAddr {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    let bda = self.raw();
+    write!(
+      f,
+      "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+      bda[0], bda[1], bda[2], bda[3], bda[4], bda[5]
+    )
+  }
+}
+impl Debug for BdAddr {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    Display::fmt(self, f)
+  }
+}
+
 // https://www.usb.org/sites/default/files/documents/hid1_11.pdf
-pub const MEDIA_REPORT_MAP: [u8; 111] = [
-  0x05, 0x0C, // Usage Page (Consumer)
-  0x09, 0x01, // Usage (Consumer Control)
-  0xA1, 0x01, // Collection (Application)
-  0x85, 0x03, //   Report ID (3)
-  0x09, 0x02, //   Usage (Numeric Key Pad)
-  0xA1, 0x02, //   Collection (Logical)
-  0x05, 0x09, //     Usage Page (Button)
-  0x19, 0x01, //     Usage Minimum (0x01)
-  0x29, 0x0A, //     Usage Maximum (0x0A)
-  0x15, 0x01, //     Logical Minimum (1)
-  0x25, 0x0A, //     Logical Maximum (10)
-  0x75, 0x04, //     Report Size (4)
-  0x95, 0x01, //     Report Count (1)
-  0x81, 0x00, //     Input (Data,Array,Abs,No Wrap,Linear,Preferred State,No Null Position)
-  0xC0, //         End Collection
-  0x05, 0x0C, //   Usage Page (Consumer)
-  0x09, 0x86, //   Usage (Channel)
-  0x15, 0xFF, //   Logical Minimum (-1)
-  0x25, 0x01, //   Logical Maximum (1)
-  0x75, 0x02, //   Report Size (2)
-  0x95, 0x01, //   Report Count (1)
-  0x81, 0x46, //   Input (Data,Var,Rel,No Wrap,Linear,Preferred State,Null State)
-  0x09, 0xE9, //   Usage (Volume Increment)
-  0x09, 0xEA, //   Usage (Volume Decrement)
-  0x15, 0x00, //   Logical Minimum (0)
-  0x75, 0x01, //   Report Size (1)
-  0x95, 0x02, //   Report Count (2)
-  0x81, 0x02, //   Input (Data,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
-  0x09, 0xE2, //   Usage (Mute)
-  0x09, 0x30, //   Usage (Power)
-  0x09, 0x83, //   Usage (Recall Last)
-  0x09, 0x81, //   Usage (Assign Selection)
-  0x09, 0xB0, //   Usage (Play)
-  0x09, 0xB1, //   Usage (Pause)
-  0x09, 0xB2, //   Usage (Record)
-  0x09, 0xB3, //   Usage (Fast Forward)
-  0x09, 0xB4, //   Usage (Rewind)
-  0x09, 0xB5, //   Usage (Scan Next Track)
-  0x09, 0xB6, //   Usage (Scan Previous Track)
-  0x09, 0xB7, //   Usage (Stop)
-  0x15, 0x01, //   Logical Minimum (1)
-  0x25, 0x0C, //   Logical Maximum (12)
-  0x75, 0x04, //   Report Size (4)
-  0x95, 0x01, //   Report Count (1)
-  0x81, 0x00, //   Input (Data,Array,Abs,No Wrap,Linear,Preferred State,No Null Position)
-  0x09, 0x80, //   Usage (Selection)
-  0xA1, 0x02, //   Collection (Logical)
-  0x05, 0x09, //     Usage Page (Button)
-  0x19, 0x01, //     Usage Minimum (0x01)
-  0x29, 0x03, //     Usage Maximum (0x03)
-  0x15, 0x01, //     Logical Minimum (1)
-  0x25, 0x03, //     Logical Maximum (3)
-  0x75, 0x02, //     Report Size (2)
-  0x81, 0x00, //     Input (Data,Array,Abs,No Wrap,Linear,Preferred State,No Null Position)
-  0xC0, //         End Collection
-  0x81, 0x03, //   Input (Const,Var,Abs,No Wrap,Linear,Preferred State,No Null Position)
-  0xC0, //       End Collection
-];
 pub const KEYBOARD_REPORT_MAP: [u8; 65] = [
   // 7 bytes input (modifiers, resrvd, keys*5), 1 byte output
   0x05, 0x01, // Usage Page (Generic Desktop Ctrls)
@@ -138,18 +100,6 @@ pub const KEYBOARD_REPORT_MAP: [u8; 65] = [
   0x81, 0x00, //   Input (Data,Array,Abs,No Wrap,Linear,Preferred State,No Null Position)
   0xC0, //       End Collection
 ];
-
-pub fn ble_gap_set_security_param<T>(param: esp_ble_sm_param_t, value: &T) {
-  let value = value as *const T as _;
-  let len = mem::size_of::<T>() as _;
-  unsafe { esp_nofail!(esp_ble_gap_set_security_param(param, value, len)) }
-}
-
-pub fn ble_gap_set_device_name(name: &str) {
-  let name = CString::new(name).unwrap();
-  let name = name.as_ptr();
-  unsafe { esp_nofail!(esp_ble_gap_set_device_name(name)) }
-}
 
 pub fn bt_controller_config_default(mode: esp_bt_mode_t) -> esp_bt_controller_config_t {
   esp_bt_controller_config_t {
@@ -258,25 +208,6 @@ pub fn ble_key_type_name(key_type: esp_ble_key_type_t) -> String {
     _ => "INVALID",
   }
   .to_string()
-}
-
-#[allow(clippy::unusual_byte_groupings)]
-pub fn is_keyboard_cod(cod: u32) -> bool {
-  // https://www.bluetooth.com/wp-content/uploads/Files/Specification/HTML/Assigned_Numbers/out/en/Assigned_Numbers.pdf
-  // class of device
-  // - reserved_2:  2 bits
-  // - minor:       6 bits
-  // - major:       5 bits
-  // - service:    11 bits
-  // - reserved_8:  8 bits
-
-  // example of cod for keyboard:
-  // unused   service     major minor  unused
-  // 00000000 00000000001 00101 010000 00
-  //                      ^^^^^  ^
-  //                 peripheral  keyboard
-
-  (cod & 0b00000000_00000000000_11111_010000_00) == 0b00000000_00000000000_00101_010000_00
 }
 
 pub fn char_to_code(key: u8) -> [u8; 8] {
