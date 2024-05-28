@@ -1,7 +1,9 @@
 // Importing esp_idf_svc::sys::* together slows down vscode autocomplete,
 // so it is better to import them individually during development
 
-// HID Usage Tables
+// HID Keyboard Protocol
+// https://wiki.osdev.org/USB_Human_Interface_Devices
+// https://usb.org/sites/default/files/hid1_11.pdf
 // https://usb.org/sites/default/files/hut1_22.pdf
 
 #![allow(non_upper_case_globals)]
@@ -65,6 +67,102 @@ fn main() {
   init_hid_host(ReceiveTask::new(input_tx)).unwrap();
 }
 
+mod transcoder {
+  use std::mem;
+
+  pub struct Transcoder {
+    phase: bool,
+    prev: Vec<u8>,
+  }
+  impl Transcoder {
+    pub fn new() -> Self {
+      Self {
+        prev: vec![0; 8],
+        phase: false,
+      }
+    }
+    pub fn transcode(&mut self, data: Vec<u8>) -> Vec<Vec<u8>> {
+      if data.len() != 8 {
+        return vec![]; // ignore
+      }
+
+      let prev = mem::replace(&mut self.prev, data.clone());
+      let mut result = vec![];
+
+      // 1. handle modifier keys (encoded to 0x0000..=0x00ff)
+      if prev[0] != data[0] {
+        result.push(self.encode_bits(data[0] as u16));
+      }
+
+      // return if keyboard roll-over error
+      if data[2..].iter().any(|&k| (0x00..=0x03).contains(&k)) {
+        return result;
+      }
+
+      // TODO: what if the same key is pressed and released at the same time?
+      // example: 00 00 04 05 00 00 00 00 -> 00 00 05 04 00 00 00 00 (ab -> ba)
+
+      // 2. handle key release (encoded to 0x0100..=0x01ff)
+      for &key in prev[2..].iter() {
+        if key == 0 {
+          continue;
+        }
+        if data[2..].iter().all(|&k| k != key) {
+          result.push(self.encode_bits(0x100 | key as u16));
+        }
+      }
+
+      // 3. handle key press (encoded to 0x0200..=0x02ff)
+      for &key in data[2..].iter() {
+        if key == 0 {
+          continue;
+        }
+        if prev[2..].iter().all(|&k| k != key) {
+          result.push(self.encode_bits(0x200 | key as u16));
+        }
+      }
+
+      result
+    }
+    fn encode_bits(&mut self, bits: u16) -> Vec<u8> {
+      // use key chord to encode bits
+      // phase 0: use 'a' (0x04) to 'r' (0x15) (18 keys)
+      // phase 1: use 's' (0x16) to '0' (0x27) (18 keys)
+      // permutation(18, 4) = 73440 combinations (>= 16 bits)
+
+      let phase = !self.phase;
+      self.phase = phase;
+
+      let keys = if phase { 0x04..=0x15 } else { 0x16..=0x27 };
+      let keys = keys.collect::<Vec<_>>();
+
+      let mut keyi = [
+        bits % 18,
+        (bits / 18) % 17,
+        (bits / (18 * 17)) % 16,
+        (bits / (18 * 17 * 16)) % 15,
+      ];
+
+      // [0, 0, 0, 0] -> [0, 1, 2, 3]
+      // [1, 0, 1, 1] -> [1, 0, 3, 4]
+      for i in (0..4).rev() {
+        for j in 0..i {
+          if keyi[j] <= keyi[i] {
+            keyi[i] += 1;
+          }
+        }
+      }
+
+      let mut result = vec![0; 8];
+      for (i, &keyi) in keyi.iter().enumerate() {
+        result[i + 2] = keys[keyi as usize];
+      }
+
+      result
+    }
+  }
+}
+
 struct TypingTask {
   resume: mpsc::Sender<()>,
   pause: mpsc::Sender<()>,
@@ -74,12 +172,17 @@ impl TypingTask {
     let (resume_tx, resume_rx) = mpsc::channel();
     let (pause_tx, pause_rx) = mpsc::channel();
 
-    let task = move || {
-      let mut input = input_rx.recv().unwrap();
+    let mut transcoder = transcoder::Transcoder::new();
 
-      let _ = device
-        .send_input(0, 1, &mut input)
-        .inspect_err(|e| error!("failed to send key press: {:?}", e));
+    let mut task = move || {
+      let input = input_rx.recv().unwrap();
+
+      for mut input in transcoder.transcode(input) {
+        let _ = device
+          .send_input(0, 1, &mut input)
+          .inspect_err(|e| error!("failed to send key press: {:?}", e));
+        sleep(Duration::from_millis(50));
+      }
     };
 
     spawn(move || loop {
