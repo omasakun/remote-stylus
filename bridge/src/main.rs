@@ -1,19 +1,13 @@
-// unsafe をちゃんと扱う・伝搬させることは、ひとまず考えないでコードを書いてる！
+// Importing esp_idf_svc::sys::* together slows down vscode autocomplete,
+// so it is better to import them individually during development
 
-// 引数をアレコレしないと呼べない関数は、ラッパー関数を作って呼ぶ、多分そうする
-
-// esp_idf_svc::sys::* を glob import すると vscode autocomplete が遅くなるので、
-// 開発時には個別に import している
-
-// https://doc.rust-jp.rs/book-ja/ch19-01-unsafe-rust.html
-// https://github.com/espressif/esp-idf/tree/v5.2.1/examples/bluetooth/esp_hid_device
-// https://www.espressif.com/sites/default/files/documentation/esp32_bluetooth_architecture_en.pdf
+// HID Usage Tables
+// https://usb.org/sites/default/files/hut1_22.pdf
 
 #![allow(non_upper_case_globals)]
 
 mod hidd;
 mod hidh;
-mod lorem;
 mod scan;
 mod utils;
 
@@ -32,7 +26,6 @@ use log::{error, info};
 use crate::{
   hidd::{init_hid_device, notify_gap_auth_success, HidDevice, HidDeviceHandler},
   hidh::{init_hid_host, open_hid_device, HidHostHandler},
-  lorem::LOREM_IPSUM,
   scan::{notify_discovery_finished, notify_discovery_result, scan_bluetooth},
   utils::{
     ble_gap_event_name, ble_key_type_name, bt_controller_config_default, bt_gap_event_name, initialize_nvs, BdAddr,
@@ -63,8 +56,13 @@ fn main() {
     esp_nofail!(esp_ble_gap_register_callback(Some(ble_gap_callback)));
   }
 
-  init_hid_device("Keyboard Bridge", "o137", "0137", &KEYBOARD_REPORT_MAP, TypingTask::new).unwrap();
-  init_hid_host(ReceiveTask::new()).unwrap();
+  let (input_tx, input_rx) = mpsc::channel();
+
+  init_hid_device("Keyboard Bridge", "o137", "0137", &KEYBOARD_REPORT_MAP, |device| {
+    TypingTask::new(device, input_rx)
+  })
+  .unwrap();
+  init_hid_host(ReceiveTask::new(input_tx)).unwrap();
 }
 
 struct TypingTask {
@@ -72,60 +70,48 @@ struct TypingTask {
   pause: mpsc::Sender<()>,
 }
 impl TypingTask {
-  fn new(device: HidDevice) -> Self {
+  fn new(device: HidDevice, input_rx: mpsc::Receiver<Vec<u8>>) -> Self {
     let (resume_tx, resume_rx) = mpsc::channel();
     let (pause_tx, pause_rx) = mpsc::channel();
-    let this = Self {
-      resume: resume_tx,
-      pause: pause_tx,
-    };
 
-    fn task(device: &HidDevice, i: &mut usize) {
-      sleep(Duration::from_secs(1));
-
-      let c = LOREM_IPSUM.as_bytes()[*i];
-      *i = (*i + 1) % LOREM_IPSUM.len();
+    let task = move || {
+      let mut input = input_rx.recv().unwrap();
 
       let _ = device
-        .send_keyboard_press(c)
+        .send_input(0, 1, &mut input)
         .inspect_err(|e| error!("failed to send key press: {:?}", e));
-      sleep(Duration::from_millis(10));
-      let _ = device
-        .send_keyboard_release()
-        .inspect_err(|e| error!("failed to send key release: {:?}", e));
-      sleep(Duration::from_millis(10));
-    }
+    };
 
     spawn(move || loop {
       match resume_rx.recv() {
         Ok(_) => {
-          info!("typing task: resume");
+          info!("typing: resume");
         }
         Err(_) => {
-          info!("typing task: exit");
+          info!("typing: exit");
           return;
         }
       }
-
-      let mut i = 0;
-      sleep(Duration::from_secs(5));
-
       loop {
         match pause_rx.try_recv() {
           Err(TryRecvError::Empty) => {}
           Ok(_) => {
-            info!("typing task: pause");
+            info!("typing: pause");
             break;
           }
           Err(TryRecvError::Disconnected) => {
-            info!("typing task: exit");
+            info!("typing: exit");
             return;
           }
         }
-        task(&device, &mut i);
+        task();
       }
     });
-    this
+
+    Self {
+      resume: resume_tx,
+      pause: pause_tx,
+    }
   }
 }
 impl HidDeviceHandler for TypingTask {
@@ -140,11 +126,13 @@ impl HidDeviceHandler for TypingTask {
 #[derive(Clone)]
 struct ReceiveTask {
   scanning: Arc<Mutex<bool>>,
+  input_tx: mpsc::Sender<Vec<u8>>,
 }
 impl ReceiveTask {
-  fn new() -> Self {
+  fn new(input_tx: mpsc::Sender<Vec<u8>>) -> Self {
     let this = Self {
       scanning: Arc::new(Mutex::new(true)),
+      input_tx,
     };
 
     spawn({
@@ -155,7 +143,6 @@ impl ReceiveTask {
           continue;
         }
 
-        info!("scan task: scanning");
         let devices = scan_bluetooth(Duration::from_secs(5));
         if !this.is_scanning() {
           continue;
@@ -164,14 +151,15 @@ impl ReceiveTask {
         let mut keyboard = None;
         for device in devices.iter().filter(|d| d.is_keyboard()) {
           if device.is_keyboard() {
-            info!("scan task: found keyboard: {:?}", device);
+            info!("found keyboard: {:?}", device);
             keyboard = Some(device);
           } else {
-            info!("scan task: found device: {:?}", device);
+            info!("found device: {:?}", device);
           }
         }
+
         if let Some(keyboard) = keyboard {
-          info!("scan task: connecting to keyboard: {:?}", keyboard);
+          info!("connecting to keyboard: {}", keyboard.bda);
           if let Err(e) = open_hid_device(keyboard.bda) {
             error!("failed to open hid device: {:?}", e);
           }
@@ -198,10 +186,9 @@ impl HidHostHandler for ReceiveTask {
   fn on_close(&self, _addr: BdAddr) {
     self.set_scanning(true);
   }
-  fn on_input(&self, _addr: BdAddr, usage: hidh::HidUsage, _map_index: u8, _report_id: u16, _data: &[u8]) {
+  fn on_input(&self, _addr: BdAddr, usage: hidh::HidUsage, _map_index: u8, _report_id: u16, data: &[u8]) {
     if usage.is_keyboard() {
-      // https://usb.org/sites/default/files/hut1_22.pdf
-      // TODO: send key press/release
+      self.input_tx.send(data.to_vec()).unwrap();
     }
   }
 }

@@ -66,7 +66,7 @@ extern "C" fn event_callback(
 
   match event {
     esp_hidh_event_t_ESP_HIDH_START_EVENT => {
-      info!("hidh: start");
+      info!("start");
     }
     esp_hidh_event_t_ESP_HIDH_OPEN_EVENT => {
       let open = unsafe { param.open };
@@ -74,13 +74,13 @@ extern "C" fn event_callback(
       match error {
         None => {
           let bda = get_hidh_dev_bda(open.dev);
-          info!("hidh[{}]: open", bda);
+          info!("{} open", bda);
           if let Some(handler) = HANDLER.get() {
             handler.on_open(bda);
           }
         }
         Some(e) => {
-          info!("hidh: open failed: {}", e);
+          info!("open failed: {}", e);
           if let Some(handler) = HANDLER.get() {
             handler.on_open_failed(e);
           }
@@ -90,15 +90,15 @@ extern "C" fn event_callback(
     esp_hidh_event_t_ESP_HIDH_BATTERY_EVENT => {
       let battery = unsafe { param.battery };
       let bda = get_hidh_dev_bda(battery.dev);
-      info!("hidh[{}]: battery: {}%", bda, battery.level);
+      info!("{} battery: {}%", bda, battery.level);
     }
     esp_hidh_event_t_ESP_HIDH_INPUT_EVENT => {
       let input = unsafe { param.input };
       let bda = get_hidh_dev_bda(input.dev);
       let usage = HidUsage::from(input.usage);
-      let data = hex_from_raw_data(input.data, input.length as usize);
+      let data = unsafe { hex_from_raw_data(input.data, input.length) };
       info!(
-        "hidh[{}]: input: {}, map: {}, id: {}, data: {}",
+        "{} input: {}, map: {}, id: {}, data: {}",
         bda, usage, input.map_index, input.report_id, data
       );
       if let Some(handler) = HANDLER.get() {
@@ -111,25 +111,25 @@ extern "C" fn event_callback(
       let feature = unsafe { param.feature };
       let bda = get_hidh_dev_bda(feature.dev);
       let usage = HidUsage::from(feature.usage);
-      let data = hex_from_raw_data(feature.data, feature.length as usize);
+      let data = unsafe { hex_from_raw_data(feature.data, feature.length) };
       info!(
-        "hidh[{}]: feature: {}, map: {}, id: {}, data: {}",
+        "{} feature: {}, map: {}, id: {}, data: {}",
         bda, usage, feature.map_index, feature.report_id, data
       );
     }
     esp_hidh_event_t_ESP_HIDH_CLOSE_EVENT => {
       let close = unsafe { param.close };
       let bda = get_hidh_dev_bda(close.dev);
-      info!("hidh[{}]: close", bda);
+      info!("{} close", bda);
       if let Some(handler) = HANDLER.get() {
         handler.on_close(bda);
       }
     }
     esp_hidh_event_t_ESP_HIDH_STOP_EVENT => {
-      info!("hidh: stop");
+      info!("stop");
     }
     _ => {
-      info!("hidh: unhandled event: {:?}", event);
+      info!("unhandled event: {:?}", event);
     }
   }
 }

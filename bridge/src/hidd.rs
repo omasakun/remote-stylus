@@ -173,17 +173,17 @@ extern "C" fn event_callback(
 
   match event {
     esp_hidd_event_t_ESP_HIDD_START_EVENT => {
-      info!("hidd: start");
+      info!("start");
       start_advertising();
     }
     esp_hidd_event_t_ESP_HIDD_CONNECT_EVENT => {
-      info!("hidd: connect");
+      info!("connect");
     }
     esp_hidd_event_t_ESP_HIDD_PROTOCOL_MODE_EVENT => {
       let protocol_mode = unsafe { &param.protocol_mode };
       let mode = unsafe { esp_hid_protocol_mode_str(protocol_mode.protocol_mode) };
       let mode = unsafe { CStr::from_ptr(mode).to_str().unwrap() };
-      info!("hidd: protocol mode[{}] -> {}", protocol_mode.map_index, mode);
+      info!("protocol mode[{}] -> {}", protocol_mode.map_index, mode);
     }
     esp_hidd_event_t_ESP_HIDD_CONTROL_EVENT => {
       let control = unsafe { &param.control };
@@ -192,7 +192,7 @@ extern "C" fn event_callback(
       } else {
         "enter_suspend"
       };
-      info!("hidd: control[{}] -> {}", control.map_index, operation);
+      info!("control[{}] -> {}", control.map_index, operation);
       if let Some(handler) = HANDLER.get() {
         if control.control == 1 {
           handler.on_resume();
@@ -203,29 +203,29 @@ extern "C" fn event_callback(
     }
     esp_hidd_event_t_ESP_HIDD_OUTPUT_EVENT => {
       let output = unsafe { &param.output };
-      let data = hex_from_raw_data(output.data, output.length as usize);
-      info!("hidd: output[{}]: {:}", output.map_index, data);
+      let data = unsafe { hex_from_raw_data(output.data, output.length) };
+      info!("output[{}]: {:}", output.map_index, data);
     }
     esp_hidd_event_t_ESP_HIDD_FEATURE_EVENT => {
       let feature = unsafe { &param.feature };
-      info!("hidd: feature[{}]: {:?}", feature.map_index, feature);
+      info!("feature[{}]: {:?}", feature.map_index, feature);
     }
     esp_hidd_event_t_ESP_HIDD_DISCONNECT_EVENT => {
       let disconnect = unsafe { &param.disconnect };
       let reason =
         unsafe { esp_hid_disconnect_reason_str(esp_hidd_dev_transport_get(disconnect.dev), disconnect.reason) };
       let reason = unsafe { CStr::from_ptr(reason).to_str().unwrap() };
-      info!("hidd: disconnect: {}", reason);
+      info!("disconnect: {}", reason);
       if let Some(handler) = HANDLER.get() {
         handler.on_pause();
       }
       start_advertising();
     }
     esp_hidd_event_t_ESP_HIDD_STOP_EVENT => {
-      info!("hidd: stop");
+      info!("stop");
     }
     _ => {
-      info!("hidd: unhandled event: {:?}", event);
+      info!("unhandled event: {:?}", event);
     }
   }
 }

@@ -1,67 +1,12 @@
 use std::{
-  ffi::CString,
   fmt::{Debug, Display},
-  mem, slice,
+  slice,
   thread::{sleep, spawn},
   time::Duration,
 };
 
 use esp_idf_svc::sys::*;
 use log::{error, info, warn};
-
-pub fn initialize_nvs() {
-  unsafe {
-    let result = nvs_flash_init();
-    if result == ESP_ERR_NVS_NO_FREE_PAGES || result == ESP_ERR_NVS_NEW_VERSION_FOUND {
-      warn!("failed to initialize nvs flash, erasing...");
-      esp_nofail!(nvs_flash_erase());
-      esp_nofail!(nvs_flash_init());
-    } else {
-      esp_nofail!(result);
-    }
-  }
-}
-
-pub fn spawn_heap_logger() {
-  spawn(move || loop {
-    sleep(Duration::from_millis(5000));
-    unsafe {
-      info!(
-        "free heap: {} (min: {})",
-        esp_get_free_heap_size(),
-        esp_get_minimum_free_heap_size()
-      );
-    }
-  });
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub struct BdAddr([u8; 6]);
-impl BdAddr {
-  pub fn raw(&self) -> [u8; 6] {
-    self.0
-  }
-}
-impl From<[u8; 6]> for BdAddr {
-  fn from(value: [u8; 6]) -> Self {
-    Self(value)
-  }
-}
-impl Display for BdAddr {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    let bda = self.raw();
-    write!(
-      f,
-      "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
-      bda[0], bda[1], bda[2], bda[3], bda[4], bda[5]
-    )
-  }
-}
-impl Debug for BdAddr {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    Display::fmt(self, f)
-  }
-}
 
 // https://www.usb.org/sites/default/files/documents/hid1_11.pdf
 pub const KEYBOARD_REPORT_MAP: [u8; 65] = [
@@ -100,6 +45,60 @@ pub const KEYBOARD_REPORT_MAP: [u8; 65] = [
   0x81, 0x00, //   Input (Data,Array,Abs,No Wrap,Linear,Preferred State,No Null Position)
   0xC0, //       End Collection
 ];
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct BdAddr([u8; 6]);
+impl BdAddr {
+  pub fn raw(&self) -> [u8; 6] {
+    self.0
+  }
+}
+impl From<[u8; 6]> for BdAddr {
+  fn from(value: [u8; 6]) -> Self {
+    Self(value)
+  }
+}
+impl Display for BdAddr {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    let bda = self.raw();
+    write!(
+      f,
+      "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+      bda[0], bda[1], bda[2], bda[3], bda[4], bda[5]
+    )
+  }
+}
+impl Debug for BdAddr {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    Display::fmt(self, f)
+  }
+}
+
+pub fn initialize_nvs() {
+  unsafe {
+    let result = nvs_flash_init();
+    if result == ESP_ERR_NVS_NO_FREE_PAGES || result == ESP_ERR_NVS_NEW_VERSION_FOUND {
+      warn!("failed to initialize nvs flash, erasing...");
+      esp_nofail!(nvs_flash_erase());
+      esp_nofail!(nvs_flash_init());
+    } else {
+      esp_nofail!(result);
+    }
+  }
+}
+
+pub fn spawn_heap_logger() {
+  spawn(move || loop {
+    sleep(Duration::from_millis(5000));
+    unsafe {
+      info!(
+        "free heap: {} (min: {})",
+        esp_get_free_heap_size(),
+        esp_get_minimum_free_heap_size()
+      );
+    }
+  });
+}
 
 pub fn bt_controller_config_default(mode: esp_bt_mode_t) -> esp_bt_controller_config_t {
   esp_bt_controller_config_t {
@@ -248,12 +247,10 @@ pub fn char_to_code(key: u8) -> [u8; 8] {
   data
 }
 
-pub fn hex_from_raw_data(data: *const u8, len: usize) -> String {
-  unsafe {
-    slice::from_raw_parts(data, len)
-      .iter()
-      .map(|&x| format!("{:02x}", x))
-      .collect::<Vec<_>>()
-      .join(" ")
-  }
+pub unsafe fn hex_from_raw_data(data: *const u8, len: impl Into<usize>) -> String {
+  slice::from_raw_parts(data, len.into())
+    .iter()
+    .map(|&x| format!("{:02x}", x))
+    .collect::<Vec<_>>()
+    .join(" ")
 }

@@ -1,3 +1,5 @@
+// Scan for Bluetooth devices
+
 use std::{
   ffi::CStr,
   fmt::Debug,
