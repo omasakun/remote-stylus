@@ -95,7 +95,9 @@ mod transcoder {
       }
 
       // return if keyboard roll-over error
-      if data[2..].iter().any(|&k| (0x00..=0x03).contains(&k)) {
+      if data[2..].iter().any(|&k| (0x01..=0x03).contains(&k)) {
+        self.prev = prev;
+        self.prev[0] = data[0];
         return result;
       }
 
@@ -134,29 +136,25 @@ mod transcoder {
       self.phase = phase;
 
       let keys = if phase { 0x04..=0x15 } else { 0x16..=0x27 };
-      let keys = keys.collect::<Vec<_>>();
+      let mut keys = keys.collect::<Vec<_>>();
 
-      let mut keyi = [
+      let keyi = [
         bits % 18,
         (bits / 18) % 17,
         (bits / (18 * 17)) % 16,
         (bits / (18 * 17 * 16)) % 15,
       ];
 
-      // [0, 0, 0, 0] -> [0, 1, 2, 3]
-      // [1, 0, 1, 1] -> [1, 0, 3, 4]
-      for i in (0..4).rev() {
-        for j in 0..i {
-          if keyi[j] <= keyi[i] {
-            keyi[i] += 1;
-          }
-        }
-      }
+      // info!("bits: {:04x}, keyi: {:?}", bits, &keyi);
 
       let mut result = vec![0; 8];
-      for (i, &keyi) in keyi.iter().enumerate() {
-        result[i + 2] = keys[keyi as usize];
+      for i in 0..4 {
+        let j = keyi[i] as usize;
+        result[i + 2] = keys[j];
+        keys.remove(j);
       }
+
+      // info!("         -> keys: {:?}", &result[2..]);
 
       result
     }
