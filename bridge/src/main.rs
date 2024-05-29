@@ -15,7 +15,7 @@ mod utils;
 
 use std::{
   sync::{
-    mpsc::{self, TryRecvError},
+    mpsc::{self, RecvTimeoutError, TryRecvError},
     Arc, Mutex,
   },
   thread::{sleep, spawn},
@@ -171,15 +171,46 @@ impl TypingTask {
     let (pause_tx, pause_rx) = mpsc::channel();
 
     let mut transcoder = transcoder::Transcoder::new();
+    let mut last_modifier = 0;
+    let mut pressing = false;
 
     let mut task = move || {
-      let input = input_rx.recv().unwrap();
-
-      for mut input in transcoder.transcode(input) {
+      fn send_input(device: &HidDevice, input: &mut [u8]) {
         let _ = device
-          .send_input(0, 1, &mut input)
+          .send_input(0, 1, input)
           .inspect_err(|e| error!("failed to send key press: {:?}", e));
-        sleep(Duration::from_millis(50));
+        sleep(Duration::from_millis(5));
+      }
+
+      // TODO: drop input if typing is paused
+      // TODO: better auto-repeat prevention
+
+      let timeout = if pressing {
+        Duration::from_millis(50)
+      } else {
+        Duration::from_secs(60)
+      };
+
+      match input_rx.recv_timeout(timeout) {
+        Ok(input) => {
+          let input = transcoder.transcode(input);
+          if let Some(modifier) = input.last().map(|i| i[0]) {
+            last_modifier = modifier;
+          }
+
+          for mut input in input {
+            pressing = true;
+            send_input(&device, &mut input);
+          }
+        }
+        Err(RecvTimeoutError::Timeout) => {
+          pressing = false;
+
+          send_input(&device, &mut [last_modifier, 0, 0, 0, 0, 0, 0, 0]);
+        }
+        Err(RecvTimeoutError::Disconnected) => {
+          panic!("input channel disconnected");
+        }
       }
     };
 

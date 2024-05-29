@@ -20,6 +20,7 @@ impl HidDevice {
     self.0
   }
   pub fn send_input(&self, map_index: usize, report_id: usize, data: &mut [u8]) -> Result<(), EspError> {
+    info!("send: {:?}", data);
     unsafe {
       esp!(esp_hidd_dev_input_set(
         self.raw(),
