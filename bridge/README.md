@@ -2,9 +2,9 @@
 
 ## Setup & Flash
 
-- Compilation on windows might not work due to the long path names. WSL2 is recommended.
 - Make sure to install [esp-idf dependencies](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/get-started/linux-macos-setup.html#step-1-install-prerequisites).
-- Instead of binding the USB device to WSL2, you can install `espflash` tool on Windows and flash the device from there.
+- Compilation on windows might not work due to the long path names. WSL2 is recommended.
+- Instead of binding the USB device to WSL2, you can install `espflash` tool on Windows and flash the device with it.
   - In this case, edit `.cargo/config` file to use `espflash.exe` instead of `espflash`.
 
 ```sh
