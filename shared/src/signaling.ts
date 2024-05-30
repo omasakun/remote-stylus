@@ -5,8 +5,8 @@ import { assert } from './utils'
 const SIGNALING_SERVER = 'https://signaling.o137.workers.dev'
 const APP_ID = 'remote-stylus'
 
-const ROOM_EXTEND_INTERVAL = 60 * 1000
-const MESSAGE_POLL_INTERVAL = 2000
+const ROOM_EXTEND_INTERVAL = (600 - 60) * 1000 // 1 minute before expiration
+const MESSAGE_POLL_INTERVAL = 10000
 
 export class SignalingServer {
   constructor(
