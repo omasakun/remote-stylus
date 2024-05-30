@@ -22,17 +22,17 @@ jobs:
           default: true
           buildtargets: esp32
           ldproxy: true
-      - name: Enable caching
+      - name: Enable Rust cache
         uses: Swatinem/rust-cache@v2
         with:
-          workspace: bridge
+          workspaces: bridge
       - name: Build
         run: cargo build --release
         working-directory: bridge
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: binaries
+          name: bridge-binaries
           path: |
-            bridge/target/*/release/*
-            !bridge/target/*/release/*.d
+            bridge/target/xtensa-esp32-espidf/release/bridge
+            bridge/target/xtensa-esp32-espidf/release/*.bin
