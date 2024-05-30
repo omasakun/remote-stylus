@@ -10,7 +10,6 @@
     "shadcn": "shadcn-ui"
   },
   "dependencies": {
-    "@fontsource/zen-kaku-gothic-new": "^5.0.18",
     "@radix-ui/react-icons": "^1.3.0",
     "@remote-stylus/shared": "workspace:^",
     "@tauri-apps/api": "^1.5.3",
