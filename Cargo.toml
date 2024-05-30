@@ -1,5 +1,3 @@
 [workspace]
 resolver = "2"
-members = [
-    "receiver/src-tauri",
-]
+members = ["host/src-tauri"]

@@ -135,7 +135,7 @@ export function Inner() {
       // console.log(event)
       console.log('pointer event', event.eventType)
 
-      if (event.button < 0) event.button = 0 // TODO: move this to the sender?
+      if (event.button < 0) event.button = 0 // TODO: move this to the client?
       injectPointerEvent(event)
     })
   }
