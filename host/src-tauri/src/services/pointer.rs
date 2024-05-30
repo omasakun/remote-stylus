@@ -11,17 +11,17 @@ use windows::Win32::{
   Foundation::{HANDLE, HWND, POINT, RECT},
   UI::{
     Controls::{
-      CreateSyntheticPointerDevice, DestroySyntheticPointerDevice, HSYNTHETICPOINTERDEVICE,
-      POINTER_FEEDBACK_NONE, POINTER_TYPE_INFO, POINTER_TYPE_INFO_0,
+      CreateSyntheticPointerDevice, DestroySyntheticPointerDevice, HSYNTHETICPOINTERDEVICE, POINTER_FEEDBACK_NONE,
+      POINTER_TYPE_INFO, POINTER_TYPE_INFO_0,
     },
     Input::Pointer::{
       InjectSyntheticPointerInput, POINTER_CHANGE_NONE, POINTER_FLAG_CANCELED, POINTER_FLAG_DOWN,
-      POINTER_FLAG_INCONTACT, POINTER_FLAG_INRANGE, POINTER_FLAG_PRIMARY, POINTER_FLAG_UP,
-      POINTER_FLAG_UPDATE, POINTER_INFO, POINTER_PEN_INFO, POINTER_TOUCH_INFO,
+      POINTER_FLAG_INCONTACT, POINTER_FLAG_INRANGE, POINTER_FLAG_PRIMARY, POINTER_FLAG_UP, POINTER_FLAG_UPDATE,
+      POINTER_INFO, POINTER_PEN_INFO, POINTER_TOUCH_INFO,
     },
     WindowsAndMessaging::{
-      PEN_FLAG_NONE, PEN_MASK_PRESSURE, PEN_MASK_ROTATION, PEN_MASK_TILT_X, PEN_MASK_TILT_Y,
-      PT_MOUSE, PT_PEN, PT_TOUCH, TOUCH_FLAG_NONE, TOUCH_MASK_CONTACTAREA, TOUCH_MASK_PRESSURE,
+      PEN_FLAG_NONE, PEN_MASK_PRESSURE, PEN_MASK_ROTATION, PEN_MASK_TILT_X, PEN_MASK_TILT_Y, PT_MOUSE, PT_PEN,
+      PT_TOUCH, TOUCH_FLAG_NONE, TOUCH_MASK_CONTACTAREA, TOUCH_MASK_PRESSURE,
     },
   },
 };
@@ -102,9 +102,7 @@ impl From<PointerEvent> for Option<POINTER_TYPE_INFO> {
       PointerEventType::Down => POINTER_FLAG_INRANGE | POINTER_FLAG_INCONTACT | POINTER_FLAG_DOWN,
       PointerEventType::Move => POINTER_FLAG_INRANGE | POINTER_FLAG_INCONTACT | POINTER_FLAG_UPDATE,
       PointerEventType::Up => POINTER_FLAG_UP,
-      PointerEventType::Cancel => {
-        POINTER_FLAG_INRANGE | POINTER_FLAG_UPDATE | POINTER_FLAG_CANCELED
-      }
+      PointerEventType::Cancel => POINTER_FLAG_INRANGE | POINTER_FLAG_UPDATE | POINTER_FLAG_CANCELED,
     };
 
     let device_type = match event.pointer_type {
@@ -222,9 +220,7 @@ impl Drop for PointerDevices {
 
 impl PointerDevices {
   fn new() -> windows::core::Result<Self> {
-    let touch = unsafe {
-      CreateSyntheticPointerDevice(PT_TOUCH, MAX_CONTACTS as u32, POINTER_FEEDBACK_NONE)?
-    };
+    let touch = unsafe { CreateSyntheticPointerDevice(PT_TOUCH, MAX_CONTACTS as u32, POINTER_FEEDBACK_NONE)? };
 
     let pen = unsafe { CreateSyntheticPointerDevice(PT_PEN, 1, POINTER_FEEDBACK_NONE)? };
 
@@ -280,10 +276,7 @@ async fn reset(state: State<'_, Arc<Mutex<PointerDevices>>>) -> Result<(), Strin
 }
 
 #[tauri::command]
-async fn inject(
-  event: PointerEvent,
-  state: State<'_, Arc<Mutex<PointerDevices>>>,
-) -> Result<(), String> {
+async fn inject(event: PointerEvent, state: State<'_, Arc<Mutex<PointerDevices>>>) -> Result<(), String> {
   let mut state = state.lock().await;
   state.inject(event).map_err(|e| format!("{:?}", e))
 }
