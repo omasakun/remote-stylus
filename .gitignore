@@ -7,5 +7,5 @@ icons/
 node_modules/
 target/
 
-# macOS-specific files
+# macos-specific files
 .DS_Store

@@ -3,10 +3,10 @@
   "type": "module",
   "scripts": {
     "format": "prettier --write .",
-    "ncu": "pnpm update --interactive --latest --recursive"
+    "update": "pnpm update --interactive --latest --recursive"
   },
   "devDependencies": {
     "prettier": "^3.2.5",
-    "typescript": "^5.4.2"
+    "typescript": "^5.4.5"
   }
 }
