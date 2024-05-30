@@ -81,14 +81,19 @@
 
       /** @type {Uint8Array[]} */
       let buffer = []
+      let isFirstChunk = true
 
       /** @param {Uint8Array} data */
       function onVideo(data) {
         buffer.push(data)
 
         if (sourceBuffer && !sourceBuffer.updating) {
-          const chunk = concatUint8Arrays(buffer)
+          console.log(`Appending 1/${buffer.length} chunks`)
+
+          // const chunk = concatUint8Arrays(buffer)
+          const chunk = isFirstChunk ? buffer[0] : buffer.pop()
           buffer = []
+          isFirstChunk = false
 
           sourceBuffer.appendBuffer(chunk)
         }

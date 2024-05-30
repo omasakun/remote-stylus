@@ -2,6 +2,8 @@
 
 Turn your iPad into a drawing tablet for your PC.
 
+This project also includes a HID bridge to allow full keyboard input from a physical bluetooth keyboard to the iPad!
+
 ```
 PC at Home
   |
@@ -25,3 +27,9 @@ See [bridge/README.md](bridge) for more information.
 The WebRTC signaling server is implemented as a simple [cloudflare worker](https://developers.cloudflare.com/workers/) with [D1 database](https://developers.cloudflare.com/d1/) that exchanges the WebRTC offer and answer between the iPad and the PC.
 
 See [signaling/README.md](signaling) for more information.
+
+## Host-HTTP (Work in Progress)
+
+The host server that uses websocket instead of WebRTC to communicate with the iPad. This is useful for the case where the PC is behind a NAT and cannot establish a direct WebRTC connection with the iPad.
+
+See [host-http/README.md](host-http) for more information.
