@@ -4,28 +4,107 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Remote Stylus</title>
+    <style>
+      video {
+        width: 100%;
+        height: auto;
+      }
+    </style>
   </head>
   <body>
-    <h1>Hello!</h1>
+    <h1>WebSocket Video Stream</h1>
     <div id="status">Connecting...</div>
-    <script>
+    <video id="video" muted></video>
+    <script type="module">
+      import { pack, unpack } from 'https://cdn.jsdelivr.net/npm/msgpackr@1.10.2/+esm'
+
+      const video = document.getElementById('video')
+      const status = document.getElementById('status')
+
       const ws = new WebSocket(`ws://${location.host}/ws`)
+      ws.binaryType = 'arraybuffer'
 
-      ws.onopen = () => {
-        document.getElementById('status').innerText = 'Connected'
-        ws.send('Hello!')
-      }
+      ws.addEventListener('open', () => {
+        status.innerText = 'Connected'
+        send({ type: 'hello' })
+      })
 
-      ws.onmessage = (message) => {
-        console.log('Received:', message.data)
-      }
+      ws.addEventListener('close', () => {
+        status.innerText = 'Disconnected'
+      })
 
-      ws.onclose = () => {
-        document.getElementById('status').innerText = 'Disconnected'
-      }
-
-      ws.onerror = (error) => {
+      ws.addEventListener('error', (error) => {
         console.error('WebSocket error:', error)
+      })
+
+      ws.addEventListener('message', async (event) => {
+        const msg = unpack(new Uint8Array(event.data))
+
+        if (msg.type === 'video') {
+          onVideo(msg.data)
+        }
+      })
+
+      function send(data) {
+        ws.send(pack(data))
+      }
+
+      const mediaSource = new MediaSource()
+      video.src = URL.createObjectURL(mediaSource)
+
+      /** @type {SourceBuffer} */
+      let sourceBuffer
+
+      mediaSource.addEventListener('sourceopen', () => {
+        sourceBuffer = mediaSource.addSourceBuffer('video/webm; codecs="vp8"')
+        sourceBuffer.addEventListener('error', (error) => {
+          console.error('SourceBuffer error:', error)
+        })
+        sourceBuffer.addEventListener('updateend', () => {
+          console.log('SourceBuffer updated')
+          if (video.paused) {
+            video.play()
+          }
+        })
+        sourceBuffer.addEventListener('abort', () => {
+          console.log('SourceBuffer aborted')
+        })
+      })
+
+      mediaSource.addEventListener('sourceclose', () => {
+        console.log('MediaSource closed')
+      })
+
+      mediaSource.addEventListener('sourceended', () => {
+        console.log('MediaSource ended')
+      })
+
+      /** @type {Uint8Array[]} */
+      let buffer = []
+
+      /** @param {Uint8Array} data */
+      function onVideo(data) {
+        buffer.push(data)
+
+        if (sourceBuffer && !sourceBuffer.updating) {
+          const chunk = concatUint8Arrays(buffer)
+          buffer = []
+
+          sourceBuffer.appendBuffer(chunk)
+        }
+      }
+
+      function concatUint8Arrays(arrays) {
+        const totalLength = arrays.reduce((acc, arr) => acc + arr.length, 0)
+        const result = new Uint8Array(totalLength)
+        let offset = 0
+
+        for (const arr of arrays) {
+          result.set(arr, offset)
+          offset += arr.length
+        }
+
+        return result
       }
     </script>
   </body>
