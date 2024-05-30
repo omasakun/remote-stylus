@@ -2,7 +2,7 @@ import { EventEmitter } from 'eventemitter3'
 import SimplePeer from 'simple-peer'
 import { assert } from './utils'
 
-const SIGNALING_SERVER = 'https://webrtc-signaling.o137.workers.dev'
+const SIGNALING_SERVER = 'https://signaling.o137.workers.dev'
 const APP_ID = 'remote-stylus'
 
 const ROOM_EXTEND_INTERVAL = 60 * 1000
