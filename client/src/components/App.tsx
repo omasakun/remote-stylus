@@ -43,7 +43,7 @@ export function App() {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const [videoStream, setVideoStream] = useState<MediaStream | null>(null)
 
-  /** 利便性のために i32 から u32 への変換を行うためのマップ */
+  // A map for converting pointerId from i32 to u32
   const pointerIdMap = useRef(new Map<number, number>())
 
   useEffect(() => {
@@ -88,7 +88,7 @@ export function App() {
       peer.on('connect', async () => {
         setStatus({ type: 'connected' })
 
-        // 接続開始とほぼ同時に発生した signal メッセージがもれないように、接続後に念のため再送信する
+        // Resend the signal messages that were almost simultaneously generated with the connection start to prevent them from being missed.
         queue.forEach((item) => {
           peer.sendObject('signal', item.data)
         })

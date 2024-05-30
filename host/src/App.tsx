@@ -88,7 +88,7 @@ export function Inner() {
       peer.on('connect', () => {
         setStatus({ type: 'connected' })
 
-        // 接続開始とほぼ同時に発生した signal メッセージがもれないように、接続後に念のため再送信する
+        // Resend the signal messages that were almost simultaneously generated with the connection start to prevent them from being missed.
         queue.forEach((item) => {
           peer.sendObject('signal', item.data)
         })
@@ -121,6 +121,8 @@ export function Inner() {
   }, [])
 
   async function onConnected(peer: Peer) {
+    // TODO: implement screen capture in Rust, so that we can capture the screen without the permission dialog
+
     const stream = await navigator.mediaDevices.getDisplayMedia({
       video: {
         displaySurface: 'monitor',

@@ -1,6 +1,11 @@
-# Remote Stylus
-
-Turn your iPad into a drawing tablet for your PC.
+<br>
+<div align="center">
+  <h1>Remote Stylus</h1>
+  <p>Turn your iPad into a drawing tablet for your PC</p>
+  <p>iPad をペンタブレットとして使いたい</p>
+</div>
+<br>
+<br>
 
 This project also includes a HID bridge to allow full keyboard input from a physical bluetooth keyboard to the iPad!
 
@@ -15,6 +20,18 @@ PC at Home
 iPad --------- ESP32 --------- Keyboard
         BLE          Bluetooth
 ```
+
+## Host App
+
+The host app is a [Tauri](https://tauri.app/) app that runs on the PC. It captures the screen and sends it to the iPad using WebRTC, and receives the touch input from the iPad and emulates it on the PC.
+
+See [host/README.md](host) for more information.
+
+## Client App
+
+The client web app is a [Astro](https://astro.build/) + [React](https://react.dev/) app that runs on the iPad, hosted on Cloudflare Pages. It receives the screen capture from the PC and sends the touch, pen, and keyboard input to the PC.
+
+See [client/README.md](client) for more information.
 
 ## HID Bridge
 

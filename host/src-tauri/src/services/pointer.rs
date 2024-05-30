@@ -111,8 +111,8 @@ impl From<PointerEvent> for Option<POINTER_TYPE_INFO> {
       PointerType::Touch => PT_TOUCH,
     };
 
-    // TODO: ボタンを押したりできるペンを使うときに使いそう
-    // BUTTON_DOWN だけじゃなくて BUTTON_UP もある
+    // TODO: Handle pointer buttons (e.g. eraser?).
+    //       The BUTTON_UP event should be handled as well
     let button_change_type = POINTER_CHANGE_NONE;
     // let button_change_type = match val.button {
     //   Button::PRIMARY => POINTER_CHANGE_FIRSTBUTTON_DOWN,
