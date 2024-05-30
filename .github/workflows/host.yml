@@ -34,17 +34,9 @@ jobs:
         uses: pnpm/action-setup@v4
         with:
           version: 9
-      # - name: Get pnpm store path
-      #   shell: bash
-      #   run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
-      # - name: Enable pnpm caching
-      #   uses: actions/cache@v4
-      #   with:
-      #     path: ${{ env.STORE_PATH }}
-      #     key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
-      #     restore-keys: ${{ runner.os }}-pnpm-store-
-      # - name: Enable Rust caching
-      #   uses: Swatinem/rust-cache@v2
+          run_install: true
+      - name: Enable Rust caching
+        uses: Swatinem/rust-cache@v2
       - name: Build
         run: |
           pnpm install
@@ -53,8 +45,8 @@ jobs:
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: host
+          name: binaries
           path: |
             target/release/bundle/
-            target/release/host
-            target/release/host.*
+            target/release/*
+            !target/release/*.d

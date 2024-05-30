@@ -22,16 +22,17 @@ jobs:
           default: true
           buildtargets: esp32
           ldproxy: true
-      # - name: Enable caching
-      #   uses: Swatinem/rust-cache@v2
-      #   with:
-      #     workspace: bridge
+      - name: Enable caching
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspace: bridge
       - name: Build
         run: cargo build --release
         working-directory: bridge
       - name: Upload
         uses: actions/upload-artifact@v4
         with:
-          name: bridge
+          name: binaries
           path: |
-            bridge/target/*/release/bridge
+            bridge/target/*/release/*
+            !bridge/target/*/release/*.d
